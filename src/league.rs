@@ -1,3 +1,5 @@
+use std::{ops::Deref, sync::Arc};
+
 use base64::{Engine, prelude::BASE64_STANDARD};
 
 const RIOT_ROOT_CERTIFICATE_URL: &str =
@@ -38,4 +40,58 @@ impl AuthenticatedHttp {
 
         Ok(Self { http })
     }
+}
+
+impl Deref for AuthenticatedHttp {
+    type Target = reqwest::Client;
+
+    fn deref(&self) -> &Self::Target {
+        &self.http
+    }
+}
+
+pub struct EventSpec;
+
+pub struct FunctionSpec;
+
+pub struct TypeSpec {
+    pub name: String,
+    pub description: Option<String>,
+    pub detail: TypeSpecDetail,
+    pub tags: Vec<String>,
+}
+
+pub enum TypeSpecDetail {
+    Object(Vec<ObjectFieldSpec>),
+    Enum(Vec<EnumEntrySpec>),
+}
+
+pub struct ObjectFieldSpec {
+    pub name: String,
+    pub offset: u64,
+    pub optional: bool,
+    pub ty: ObjectFieldSpecType,
+}
+
+pub enum ObjectFieldSpecType {
+    String,
+    Boolean,
+    Uint8,
+    Uint16,
+    Uint32,
+    Uint64,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Double,
+    Float,
+    Vector(Arc<ObjectFieldSpecType>),
+    Resolve(Arc<TypeSpec>),
+}
+
+pub struct EnumEntrySpec {
+    pub name: String,
+    pub value: u64,
+    pub description: Option<String>,
 }
