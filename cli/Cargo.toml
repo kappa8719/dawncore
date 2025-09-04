@@ -1,6 +1,10 @@
 [package]
-name = "cli"
+name = "lapi-cli"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+lapi.workspace = true
+lapi-apigen.workspace = true
+tokio.workspace = true
+reqwest.workspace = true

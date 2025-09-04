@@ -18,16 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "apigen"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "riot-bridge",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -93,16 +83,6 @@ name = "cfg-if"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
-
-[[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "apigen",
- "reqwest",
- "riot-bridge",
- "tokio",
-]
 
 [[package]]
 name = "core-foundation"
@@ -572,6 +552,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "lapi"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "reqwest",
+ "serde",
+]
+
+[[package]]
+name = "lapi-apigen"
+version = "0.1.0"
+dependencies = [
+ "lapi",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lapi-cli"
+version = "0.1.0"
+dependencies = [
+ "lapi",
+ "lapi-apigen",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.175"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -601,9 +610,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.27"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "memchr"
@@ -854,14 +863,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "riot-bridge"
-version = "0.1.0"
-dependencies = [
- "base64",
- "reqwest",
 ]
 
 [[package]]
