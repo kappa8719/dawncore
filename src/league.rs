@@ -1,7 +1,10 @@
 use std::{ops::Deref, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{VariantAccess, Visitor},
+};
 
 const RIOT_ROOT_CERTIFICATE_URL: &str =
     "https://static.developer.riotgames.com/docs/lol/riotgames.pem";
@@ -51,27 +54,30 @@ impl Deref for AuthenticatedHttp {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EventSpec;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionSpec;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TypeSpec {
     pub name: String,
     pub description: Option<String>,
     pub detail: TypeSpecDetail,
     pub tags: Vec<String>,
+    pub size: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "repr")]
 pub enum TypeSpecDetail {
-    Object(Vec<ObjectFieldSpec>),
-    Enum(Vec<EnumEntrySpec>),
+    Object { fields: Vec<ObjectFieldSpec> },
+    Enum { entries: Vec<EnumEntrySpec> },
+    Unit,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ObjectFieldSpec {
     pub name: String,
     pub description: Option<String>,
@@ -80,6 +86,7 @@ pub struct ObjectFieldSpec {
     pub ty: ObjectFieldSpecType,
 }
 
+#[derive(Debug, Clone)]
 pub enum ObjectFieldSpecType {
     String,
     Boolean,
@@ -135,9 +142,101 @@ impl Serialize for ObjectFieldSpecType {
     }
 }
 
-fn serialize_vector_field() {}
+struct ObjectFieldSpecTypeVisitor;
 
-#[derive(Debug, Serialize, Deserialize)]
+impl<'de> Visitor<'de> for ObjectFieldSpecTypeVisitor {
+    type Value = ObjectFieldSpecType;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a variant of ObjectFieldSpecType")
+    }
+
+    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::EnumAccess<'de>,
+    {
+        let (variant, variant_access) = data.variant::<String>()?;
+
+        fn visit_unit<'de, A>(
+            variant_access: A::Variant,
+            variant: ObjectFieldSpecType,
+        ) -> Result<ObjectFieldSpecType, A::Error>
+        where
+            A: serde::de::EnumAccess<'de>,
+        {
+            variant_access.unit_variant()?;
+            Ok(variant)
+        }
+
+        fn visit_vector<'de, A>(variant_access: A::Variant) -> Result<ObjectFieldSpecType, A::Error>
+        where
+            A: serde::de::EnumAccess<'de>,
+        {
+            let name = variant_access.newtype_variant::<String>()?;
+
+            Ok(ObjectFieldSpecType::Vector(Arc::new(
+                ObjectFieldSpecType::Unresolved(name),
+            )))
+        }
+
+        fn visit_unresolved<'de, A>(
+            variant_access: A::Variant,
+        ) -> Result<ObjectFieldSpecType, A::Error>
+        where
+            A: serde::de::EnumAccess<'de>,
+        {
+            let name = variant_access.newtype_variant::<String>()?;
+
+            Ok(ObjectFieldSpecType::Unresolved(name))
+        }
+
+        match variant.as_str() {
+            "String" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::String),
+            "Boolean" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Boolean),
+            "Uint8" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Uint8),
+            "Uint16" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Uint16),
+            "Uint32" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Uint32),
+            "Uint64" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Uint64),
+            "Int8" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Int8),
+            "Int16" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Int16),
+            "Int32" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Int32),
+            "Int64" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Int64),
+            "Double" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Double),
+            "Float" => visit_unit::<'de, A>(variant_access, ObjectFieldSpecType::Float),
+            "Vector" => visit_vector::<'de, A>(variant_access),
+            "Resolved" | "Unresolved" => visit_unresolved::<'de, A>(variant_access),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ObjectFieldSpecType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let variants = &[
+            "String",
+            "Boolean",
+            "Uint8",
+            "Uint16",
+            "Uint32",
+            "Uint64",
+            "Int8",
+            "Int16",
+            "Int32",
+            "Int64",
+            "Double",
+            "Float",
+            "Vector",
+            "Resolved",
+            "Unresolved",
+        ];
+        deserializer.deserialize_enum("ObjectFieldSpecType", variants, ObjectFieldSpecTypeVisitor)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnumEntrySpec {
     pub name: String,
     pub value: u64,

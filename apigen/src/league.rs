@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 
 use lapi::league::{EnumEntrySpec, ObjectFieldSpec, ObjectFieldSpecType, TypeSpec, TypeSpecDetail};
 use reqwest::Url;
@@ -34,7 +34,10 @@ impl League {
         Ok(json)
     }
 
-    async fn resolve_types(&self, help: &RootHelpResponse) -> Result<(), reqwest::Error> {
+    async fn resolve_types(
+        &self,
+        help: &RootHelpResponse,
+    ) -> Result<HashMap<String, TypeSpec>, reqwest::Error> {
         let mut type_specs = HashMap::new();
 
         for (name, _) in help.types.iter() {
@@ -43,9 +46,43 @@ impl League {
             type_specs.insert(name, resolved);
         }
 
-        File::open("./generated_type_specs.json");
+        for (_, resolved) in type_specs.clone().iter_mut() {
+            let TypeSpecDetail::Object { fields } = &mut resolved.detail else {
+                continue;
+            };
 
-        Ok(())
+            for field in fields.iter_mut() {
+                let mut vector_depth = 0;
+                let mut ty_current = Arc::new(field.ty.clone());
+
+                while let ObjectFieldSpecType::Vector(inner) = (*ty_current).clone() {
+                    vector_depth += 1;
+                    ty_current = inner;
+                }
+
+                if let ObjectFieldSpecType::Unresolved(name) = (*ty_current).clone() {
+                    let inner = ObjectFieldSpecType::Resolved(Arc::new(
+                        type_specs
+                            .get(&name)
+                            .expect("failed to resolve type reference of {name}")
+                            .clone(),
+                    ));
+
+                    let mut root = inner;
+                    for _ in 0..vector_depth {
+                        root = ObjectFieldSpecType::Vector(Arc::new(root));
+                    }
+
+                    field.ty = root;
+                }
+            }
+        }
+
+        let mut file = File::create("./generated_type_specs.toml").unwrap();
+        file.write_all(toml::to_string_pretty(&type_specs).unwrap().as_bytes())
+            .unwrap();
+
+        Ok(type_specs)
     }
 
     async fn resolve_type(&self, name: &str) -> Result<TypeSpec, reqwest::Error> {
@@ -79,6 +116,7 @@ impl League {
 
         let fields = map.get("fields").and_then(|v| v.as_array());
         let values = map.get("values").and_then(|v| v.as_array());
+        let size = map.get("size").and_then(|v| v.as_u64());
 
         let spec_detail = if let Some(fields) = fields
             && !fields.is_empty()
@@ -88,7 +126,9 @@ impl League {
                 .filter_map(object_field_spec_from_value)
                 .collect::<Vec<_>>();
 
-            TypeSpecDetail::Object(field_specs)
+            TypeSpecDetail::Object {
+                fields: field_specs,
+            }
         } else if let Some(values) = values
             && !values.is_empty()
         {
@@ -97,14 +137,17 @@ impl League {
                 .filter_map(enum_entry_spec_from_value)
                 .collect::<Vec<_>>();
 
-            TypeSpecDetail::Enum(entry_specs)
+            TypeSpecDetail::Enum {
+                entries: entry_specs,
+            }
         } else {
-            todo!();
+            TypeSpecDetail::Unit
         };
 
         let spec = TypeSpec {
             name,
             description,
+            size,
             detail: spec_detail,
             tags: vec![],
         };

@@ -8,3 +8,5 @@ lapi.workspace = true
 lapi-apigen.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+sysinfo.workspace = true
+regex.workspace = true
