@@ -1,16 +1,27 @@
-use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Write, str::FromStr, sync::Arc};
 
-use lapi::league::{EnumEntrySpec, ObjectFieldSpec, ObjectFieldSpecType, TypeSpec, TypeSpecDetail};
+use lapi::league::{
+    EnumEntrySpec, FunctionMethod, FunctionSpec, ObjectFieldSpec, TypeReference, TypeSpec,
+    TypeSpecDetail,
+};
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct RootHelpResponse {
     events: HashMap<String, String>,
     functions: HashMap<String, String>,
     types: HashMap<String, String>,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct Resolved {
+    pub types: HashMap<String, TypeSpec>,
+    pub functions: HashMap<String, FunctionSpec>,
+}
+
 /// League api generator
 pub struct League {
     host: Url,
@@ -34,6 +45,82 @@ impl League {
         Ok(json)
     }
 
+    async fn resolve_help(&self, target: &str, format: &str) -> reqwest::Result<serde_json::Value> {
+        self.http
+            .post(self.host.join("/help").unwrap())
+            .query(&[("target", target), ("format", format)])
+            .send()
+            .await?
+            .json()
+            .await
+    }
+
+    async fn resolve_functions(
+        &self,
+        help: &RootHelpResponse,
+    ) -> reqwest::Result<HashMap<String, FunctionSpec>> {
+        let mut map = HashMap::new();
+
+        for (name, _) in help.functions.iter() {
+            println!("resolving function {name}");
+            let resolved = self.resolve_function(name.as_str()).await?;
+            map.insert(name.clone(), resolved);
+        }
+
+        Ok(map)
+    }
+
+    async fn resolve_function(&self, name: &str) -> reqwest::Result<FunctionSpec> {
+        let response_full = self.resolve_help(name, "Full").await?;
+        let response_console = self.resolve_help(name, "Console").await?;
+
+        let console_root = response_console.get(name).unwrap().as_object().unwrap();
+        let full_root = response_full.get(0).unwrap().as_object().unwrap();
+        let name = name.to_string();
+        let description = full_root
+            .get("description")
+            .unwrap()
+            .as_str()
+            .and_then(|v| {
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.to_string())
+                }
+            });
+        let method = console_root
+            .get("http_method")
+            .and_then(|v| v.as_str())
+            .and_then(|v| FunctionMethod::from_str(v).ok())
+            .unwrap_or(FunctionMethod::Post);
+        let url = console_root
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string())
+            .unwrap_or(format!("/{name}"));
+        let privilege = console_root.get("privilege").and_then(|v| v.as_u64());
+        let returns = console_root
+            .get("returns")
+            .and_then(|v| v.as_object())
+            .and_then(|v| v.keys().next_back())
+            .map(|v| resolve_type_reference(v.as_str(), ""));
+        let thread_safe = full_root
+            .get("threadSafe")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        Ok(FunctionSpec {
+            name,
+            description,
+            method,
+            url,
+            privilege,
+            returns,
+            thread_safe,
+            tags: vec![],
+        })
+    }
+
     async fn resolve_types(
         &self,
         help: &RootHelpResponse,
@@ -46,55 +133,11 @@ impl League {
             type_specs.insert(name, resolved);
         }
 
-        for (_, resolved) in type_specs.clone().iter_mut() {
-            let TypeSpecDetail::Object { fields } = &mut resolved.detail else {
-                continue;
-            };
-
-            for field in fields.iter_mut() {
-                let mut vector_depth = 0;
-                let mut ty_current = Arc::new(field.ty.clone());
-
-                while let ObjectFieldSpecType::Vector(inner) = (*ty_current).clone() {
-                    vector_depth += 1;
-                    ty_current = inner;
-                }
-
-                if let ObjectFieldSpecType::Unresolved(name) = (*ty_current).clone() {
-                    let inner = ObjectFieldSpecType::Resolved(Arc::new(
-                        type_specs
-                            .get(&name)
-                            .expect("failed to resolve type reference of {name}")
-                            .clone(),
-                    ));
-
-                    let mut root = inner;
-                    for _ in 0..vector_depth {
-                        root = ObjectFieldSpecType::Vector(Arc::new(root));
-                    }
-
-                    field.ty = root;
-                }
-            }
-        }
-
-        let mut file = File::create("./generated_type_specs.toml").unwrap();
-        file.write_all(toml::to_string_pretty(&type_specs).unwrap().as_bytes())
-            .unwrap();
-
         Ok(type_specs)
     }
 
     async fn resolve_type(&self, name: &str) -> Result<TypeSpec, reqwest::Error> {
-        let response: serde_json::Value = self
-            .http
-            .post(self.host.join("/help").unwrap())
-            .query(&[("target", name), ("format", "Full")])
-            .send()
-            .await?
-            .json()
-            .await?;
-
+        let response = self.resolve_help(name, "Full").await?;
         let map = response
             .as_array()
             .unwrap()
@@ -155,9 +198,24 @@ impl League {
         Ok(spec)
     }
 
-    pub async fn resolve(&self) {
+    pub async fn resolve(&self) -> reqwest::Result<Resolved> {
         let root_help = self.resolve_root_help().await.unwrap();
-        let _ = self.resolve_types(&root_help).await;
+        let types = self.resolve_types(&root_help).await?;
+        let functions = self.resolve_functions(&root_help).await?;
+
+        for (_, resolved) in types.clone().iter_mut() {
+            let TypeSpecDetail::Object { fields } = &mut resolved.detail else {
+                continue;
+            };
+
+            for field in fields.iter_mut() {
+                resolve_unresolved_types(&types, &mut field.ty);
+            }
+        }
+
+        for (_, resolved) in functions.clone().iter_mut() {}
+
+        Ok(Resolved { types, functions })
     }
 }
 
@@ -174,7 +232,7 @@ fn object_field_spec_from_value(value: &Value) -> Option<ObjectFieldSpec> {
     let type_object = object.get("type")?.as_object()?;
     let type_element = type_object.get("elementType")?.as_str().unwrap_or("");
     let type_inner = type_object.get("type")?.as_str()?;
-    let type_resolved = resolve_object_field_spec_type(type_inner, type_element);
+    let type_resolved = resolve_type_reference(type_inner, type_element);
 
     Some(ObjectFieldSpec {
         name: name.to_string(),
@@ -185,24 +243,24 @@ fn object_field_spec_from_value(value: &Value) -> Option<ObjectFieldSpec> {
     })
 }
 
-fn resolve_object_field_spec_type(name: &str, element_type: &str) -> ObjectFieldSpecType {
+fn resolve_type_reference(name: &str, element_type: &str) -> TypeReference {
     match name {
-        "string" => ObjectFieldSpecType::String,
-        "bool" => ObjectFieldSpecType::Boolean,
-        "uint8" => ObjectFieldSpecType::Uint8,
-        "uint16" => ObjectFieldSpecType::Uint16,
-        "uint32" => ObjectFieldSpecType::Uint32,
-        "uint64" => ObjectFieldSpecType::Uint64,
-        "int8" => ObjectFieldSpecType::Int8,
-        "int16" => ObjectFieldSpecType::Int16,
-        "int32" => ObjectFieldSpecType::Int32,
-        "int64" => ObjectFieldSpecType::Int64,
-        "double" => ObjectFieldSpecType::Double,
-        "float" => ObjectFieldSpecType::Float,
-        "vector" => {
-            ObjectFieldSpecType::Vector(Arc::new(resolve_object_field_spec_type(element_type, "")))
-        }
-        _ => ObjectFieldSpecType::Unresolved(name.to_string()),
+        "string" => TypeReference::String,
+        "bool" => TypeReference::Boolean,
+        "uint8" => TypeReference::Uint8,
+        "uint16" => TypeReference::Uint16,
+        "uint32" => TypeReference::Uint32,
+        "uint64" => TypeReference::Uint64,
+        "int8" => TypeReference::Int8,
+        "int16" => TypeReference::Int16,
+        "int32" => TypeReference::Int32,
+        "int64" => TypeReference::Int64,
+        "double" => TypeReference::Double,
+        "float" => TypeReference::Float,
+        "map" => TypeReference::Map,
+        "object" => TypeReference::Object,
+        "vector" => TypeReference::Vector(Arc::new(resolve_type_reference(element_type, ""))),
+        _ => TypeReference::Unresolved(name.to_string()),
     }
 }
 
@@ -220,4 +278,29 @@ fn enum_entry_spec_from_value(value: &Value) -> Option<EnumEntrySpec> {
         value,
         description,
     })
+}
+
+fn resolve_unresolved_types(map: &HashMap<String, TypeSpec>, target: &mut TypeReference) {
+    let mut vector_depth = 0;
+    let mut ty_current = Arc::new(target.clone());
+
+    while let TypeReference::Vector(inner) = (*ty_current).clone() {
+        vector_depth += 1;
+        ty_current = inner;
+    }
+
+    if let TypeReference::Unresolved(name) = (*ty_current).clone() {
+        let inner = TypeReference::Resolved(Arc::new(
+            map.get(&name)
+                .unwrap_or_else(|| panic!("failed to resolve type reference of {name}"))
+                .clone(),
+        ));
+
+        let mut root = inner;
+        for _ in 0..vector_depth {
+            root = TypeReference::Vector(Arc::new(root));
+        }
+
+        *target = root;
+    }
 }
