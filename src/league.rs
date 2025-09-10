@@ -56,14 +56,15 @@ impl Deref for AuthenticatedHttp {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EventSpec {
-    name: String,
-    description: Option<String>,
-    tags: Vec<String>,
-    ty: TypeReference,
+    pub name: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub ty: TypeReference,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionSpec {
+    pub arguments: Vec<FunctionArgumentSpec>,
     pub name: String,
     pub description: Option<String>,
     pub method: FunctionMethod,
@@ -111,6 +112,7 @@ impl Display for FunctionMethod {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FunctionArgumentSpec {
     pub name: String,
     pub description: Option<String>,
