@@ -132,7 +132,7 @@ async fn main() {
                             .expect("failed to write serialized type spec of {name} to file");
                     }
                 } else {
-                    let file = output.join("function.toml");
+                    let file = output.join("functions.toml");
                     let mut file = File::create(file.as_path())
                         .expect("failed to open file to write function specs");
 
@@ -147,6 +147,38 @@ async fn main() {
 
                     file.write_all(serialized.as_bytes())
                         .expect("failed to write serialized function specs to file");
+                }
+            }
+
+            if target.contains(&GenerateTarget::Events) {
+                if separate {
+                    for (name, spec) in resolved.events {
+                        let file = output.join(format!("{name}.event.toml"));
+                        let mut file = File::create(file.as_path())
+                            .expect("failed to open file to write event {name}");
+
+                        let serialized = match format {
+                            GenerateFormat::Toml => toml::to_string_pretty(&spec).unwrap(),
+                            GenerateFormat::Json => serde_json::to_string_pretty(&spec).unwrap(),
+                        };
+
+                        file.write_all(serialized.as_bytes())
+                            .expect("failed to write serialized type spec of {name} to file");
+                    }
+                } else {
+                    let file = output.join("events.toml");
+                    let mut file = File::create(file.as_path())
+                        .expect("failed to open file to write event specs");
+
+                    let serialized = match format {
+                        GenerateFormat::Toml => toml::to_string_pretty(&resolved.events).unwrap(),
+                        GenerateFormat::Json => {
+                            serde_json::to_string_pretty(&resolved.events).unwrap()
+                        }
+                    };
+
+                    file.write_all(serialized.as_bytes())
+                        .expect("failed to write serialized event specs to file");
                 }
             }
         }

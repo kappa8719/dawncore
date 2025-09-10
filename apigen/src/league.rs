@@ -1,8 +1,8 @@
-use std::{collections::HashMap, fs::File, io::Write, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use lapi::league::{
-    EnumEntrySpec, FunctionMethod, FunctionSpec, ObjectFieldSpec, TypeReference, TypeSpec,
-    TypeSpecDetail,
+    EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec, ObjectFieldSpec,
+    TypeReference, TypeSpec, TypeSpecDetail,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,9 @@ struct RootHelpResponse {
 
 #[derive(Serialize, Deserialize)]
 pub struct Resolved {
-    pub types: HashMap<String, TypeSpec>,
+    pub events: HashMap<String, EventSpec>,
     pub functions: HashMap<String, FunctionSpec>,
+    pub types: HashMap<String, TypeSpec>,
 }
 
 /// League api generator
@@ -55,6 +56,52 @@ impl League {
             .await
     }
 
+    async fn resolve_events(
+        &self,
+        help: &RootHelpResponse,
+    ) -> reqwest::Result<HashMap<String, EventSpec>> {
+        let mut map = HashMap::new();
+
+        for (name, _) in help.events.iter() {
+            let resolved = self.resolve_event(name.as_str()).await?;
+            map.insert(name.clone(), resolved);
+        }
+
+        Ok(map)
+    }
+
+    async fn resolve_event(&self, name: &str) -> reqwest::Result<EventSpec> {
+        let response = self.resolve_help(name, "Full").await?;
+        let root = response
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .as_object()
+            .unwrap();
+
+        let name = root.get("name").unwrap().as_str().unwrap().to_string();
+        let description = root
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+        let type_object = root.get("type").unwrap().as_object().unwrap();
+        let ty = resolve_type_reference(
+            type_object.get("type").unwrap().as_str().unwrap(),
+            type_object
+                .get("elementType")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        );
+
+        Ok(EventSpec {
+            name,
+            description,
+            ty,
+            tags: vec![],
+        })
+    }
+
     async fn resolve_functions(
         &self,
         help: &RootHelpResponse,
@@ -62,7 +109,6 @@ impl League {
         let mut map = HashMap::new();
 
         for (name, _) in help.functions.iter() {
-            println!("resolving function {name}");
             let resolved = self.resolve_function(name.as_str()).await?;
             map.insert(name.clone(), resolved);
         }
@@ -108,8 +154,36 @@ impl League {
             .get("threadSafe")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let arguments = full_root
+            .get("arguments")
+            .and_then(|v| v.as_array())
+            .map(|v| {
+                v.iter()
+                    .filter_map(|v| v.as_object())
+                    .map(|v| {
+                        let type_object = v.get("type").unwrap().as_object().unwrap();
+                        FunctionArgumentSpec {
+                            name: v.get("name").unwrap().as_str().unwrap().to_string(),
+                            description: v
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            optional: v.get("optional").and_then(|v| v.as_bool()).unwrap_or(false),
+                            ty: resolve_type_reference(
+                                type_object.get("type").unwrap().as_str().unwrap(),
+                                type_object
+                                    .get("elementType")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(""),
+                            ),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or(vec![]);
 
         Ok(FunctionSpec {
+            arguments,
             name,
             description,
             method,
@@ -200,22 +274,41 @@ impl League {
 
     pub async fn resolve(&self) -> reqwest::Result<Resolved> {
         let root_help = self.resolve_root_help().await.unwrap();
-        let types = self.resolve_types(&root_help).await?;
-        let functions = self.resolve_functions(&root_help).await?;
+        let mut types = self.resolve_types(&root_help).await?;
+        let mut functions = self.resolve_functions(&root_help).await?;
+        let mut events = self.resolve_events(&root_help).await?;
 
-        for (_, resolved) in types.clone().iter_mut() {
+        let types_map = types.clone();
+
+        for (_, resolved) in types.iter_mut() {
             let TypeSpecDetail::Object { fields } = &mut resolved.detail else {
                 continue;
             };
 
             for field in fields.iter_mut() {
-                resolve_unresolved_types(&types, &mut field.ty);
+                resolve_unresolved_types(&types_map, &mut field.ty);
             }
         }
 
-        for (_, resolved) in functions.clone().iter_mut() {}
+        for (_, resolved) in functions.iter_mut() {
+            for argument in resolved.arguments.iter_mut() {
+                resolve_unresolved_types(&types_map, &mut argument.ty);
+            }
 
-        Ok(Resolved { types, functions })
+            if let Some(returns) = &mut resolved.returns {
+                resolve_unresolved_types(&types_map, returns);
+            }
+        }
+
+        for (_, resolved) in events.iter_mut() {
+            resolve_unresolved_types(&types_map, &mut resolved.ty);
+        }
+
+        Ok(Resolved {
+            events,
+            types,
+            functions,
+        })
     }
 }
 
