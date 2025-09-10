@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, fs::File, io::Write, ops::Not, path::PathBuf, str::FromStr};
+use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use regex::Regex;
