@@ -1,10 +1,7 @@
-use std::{fmt::Display, ops::Deref, str::FromStr, sync::Arc};
+use std::{fmt::Display, ops::Deref, str::FromStr};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use serde::{
-    Deserialize, Serialize,
-    de::{VariantAccess, Visitor},
-};
+use serde::{Deserialize, Serialize};
 
 const RIOT_ROOT_CERTIFICATE_URL: &str =
     "https://static.developer.riotgames.com/docs/lol/riotgames.pem";
@@ -129,6 +126,12 @@ pub struct TypeSpec {
     pub size: Option<u64>,
 }
 
+impl TypeSpec {
+    pub fn identifier(&self) -> String {
+        self.name.replace("-", "_")
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "repr")]
 pub enum TypeSpecDetail {
@@ -146,7 +149,7 @@ pub struct ObjectFieldSpec {
     pub ty: TypeReference,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypeReference {
     String,
     Boolean,
@@ -162,145 +165,142 @@ pub enum TypeReference {
     Float,
     Map,
     Object,
-    Vector(Arc<TypeReference>),
-    /// The type that has been resolved
-    Resolved(Arc<TypeSpec>),
-    /// The type that has to be resolved but can not be resolved immediately
-    Unresolved(String),
+    Vector(Box<TypeReference>),
+    Reference(String),
 }
 
-impl Serialize for TypeReference {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let name = "ObjectFieldSpecType";
-        match self {
-            TypeReference::String => serializer.serialize_unit_variant(name, 0, "String"),
-            TypeReference::Boolean => serializer.serialize_unit_variant(name, 1, "Boolean"),
-            TypeReference::Uint8 => serializer.serialize_unit_variant(name, 2, "Uint8"),
-            TypeReference::Uint16 => serializer.serialize_unit_variant(name, 3, "Uint16"),
-            TypeReference::Uint32 => serializer.serialize_unit_variant(name, 4, "Uint32"),
-            TypeReference::Uint64 => serializer.serialize_unit_variant(name, 5, "Uint64"),
-            TypeReference::Int8 => serializer.serialize_unit_variant(name, 6, "Int8"),
-            TypeReference::Int16 => serializer.serialize_unit_variant(name, 7, "Int16"),
-            TypeReference::Int32 => serializer.serialize_unit_variant(name, 8, "Int32"),
-            TypeReference::Int64 => serializer.serialize_unit_variant(name, 9, "Int64"),
-            TypeReference::Double => serializer.serialize_unit_variant(name, 10, "Double"),
-            TypeReference::Float => serializer.serialize_unit_variant(name, 11, "Float"),
-            TypeReference::Map => serializer.serialize_unit_variant(name, 12, "Map"),
-            TypeReference::Object => serializer.serialize_unit_variant(name, 13, "Object"),
-            TypeReference::Vector(field_spec_type) => serializer.serialize_newtype_variant(
-                name,
-                14,
-                "Vector",
-                &*(field_spec_type.clone()),
-            ),
-            TypeReference::Resolved(type_spec) => {
-                serializer.serialize_newtype_variant(name, 15, "Resolved", type_spec.name.as_str())
-            }
-            TypeReference::Unresolved(type_name) => {
-                serializer.serialize_newtype_variant(name, 16, "Unresolved", type_name.as_str())
-            }
-        }
-    }
-}
-
-struct ObjectFieldSpecTypeVisitor;
-
-impl<'de> Visitor<'de> for ObjectFieldSpecTypeVisitor {
-    type Value = TypeReference;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("a variant of ObjectFieldSpecType")
-    }
-
-    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
-    where
-        A: serde::de::EnumAccess<'de>,
-    {
-        let (variant, variant_access) = data.variant::<String>()?;
-
-        fn visit_unit<'de, A>(
-            variant_access: A::Variant,
-            variant: TypeReference,
-        ) -> Result<TypeReference, A::Error>
-        where
-            A: serde::de::EnumAccess<'de>,
-        {
-            variant_access.unit_variant()?;
-            Ok(variant)
-        }
-
-        fn visit_vector<'de, A>(variant_access: A::Variant) -> Result<TypeReference, A::Error>
-        where
-            A: serde::de::EnumAccess<'de>,
-        {
-            let name = variant_access.newtype_variant::<String>()?;
-
-            Ok(TypeReference::Vector(Arc::new(TypeReference::Unresolved(
-                name,
-            ))))
-        }
-
-        fn visit_unresolved<'de, A>(variant_access: A::Variant) -> Result<TypeReference, A::Error>
-        where
-            A: serde::de::EnumAccess<'de>,
-        {
-            let name = variant_access.newtype_variant::<String>()?;
-
-            Ok(TypeReference::Unresolved(name))
-        }
-
-        match variant.as_str() {
-            "String" => visit_unit::<'de, A>(variant_access, TypeReference::String),
-            "Boolean" => visit_unit::<'de, A>(variant_access, TypeReference::Boolean),
-            "Uint8" => visit_unit::<'de, A>(variant_access, TypeReference::Uint8),
-            "Uint16" => visit_unit::<'de, A>(variant_access, TypeReference::Uint16),
-            "Uint32" => visit_unit::<'de, A>(variant_access, TypeReference::Uint32),
-            "Uint64" => visit_unit::<'de, A>(variant_access, TypeReference::Uint64),
-            "Int8" => visit_unit::<'de, A>(variant_access, TypeReference::Int8),
-            "Int16" => visit_unit::<'de, A>(variant_access, TypeReference::Int16),
-            "Int32" => visit_unit::<'de, A>(variant_access, TypeReference::Int32),
-            "Int64" => visit_unit::<'de, A>(variant_access, TypeReference::Int64),
-            "Double" => visit_unit::<'de, A>(variant_access, TypeReference::Double),
-            "Float" => visit_unit::<'de, A>(variant_access, TypeReference::Float),
-            "Map" => visit_unit::<'de, A>(variant_access, TypeReference::Map),
-            "Object" => visit_unit::<'de, A>(variant_access, TypeReference::Object),
-            "Vector" => visit_vector::<'de, A>(variant_access),
-            "Resolved" | "Unresolved" => visit_unresolved::<'de, A>(variant_access),
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for TypeReference {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let variants = &[
-            "String",
-            "Boolean",
-            "Uint8",
-            "Uint16",
-            "Uint32",
-            "Uint64",
-            "Int8",
-            "Int16",
-            "Int32",
-            "Int64",
-            "Double",
-            "Float",
-            "Map",
-            "Object",
-            "Vector",
-            "Resolved",
-            "Unresolved",
-        ];
-        deserializer.deserialize_enum("ObjectFieldSpecType", variants, ObjectFieldSpecTypeVisitor)
-    }
-}
+// impl Serialize for TypeReference {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         let name = "ObjectFieldSpecType";
+//         match self {
+//             TypeReference::String => serializer.serialize_unit_variant(name, 0, "String"),
+//             TypeReference::Boolean => serializer.serialize_unit_variant(name, 1, "Boolean"),
+//             TypeReference::Uint8 => serializer.serialize_unit_variant(name, 2, "Uint8"),
+//             TypeReference::Uint16 => serializer.serialize_unit_variant(name, 3, "Uint16"),
+//             TypeReference::Uint32 => serializer.serialize_unit_variant(name, 4, "Uint32"),
+//             TypeReference::Uint64 => serializer.serialize_unit_variant(name, 5, "Uint64"),
+//             TypeReference::Int8 => serializer.serialize_unit_variant(name, 6, "Int8"),
+//             TypeReference::Int16 => serializer.serialize_unit_variant(name, 7, "Int16"),
+//             TypeReference::Int32 => serializer.serialize_unit_variant(name, 8, "Int32"),
+//             TypeReference::Int64 => serializer.serialize_unit_variant(name, 9, "Int64"),
+//             TypeReference::Double => serializer.serialize_unit_variant(name, 10, "Double"),
+//             TypeReference::Float => serializer.serialize_unit_variant(name, 11, "Float"),
+//             TypeReference::Map => serializer.serialize_unit_variant(name, 12, "Map"),
+//             TypeReference::Object => serializer.serialize_unit_variant(name, 13, "Object"),
+//             TypeReference::Vector(field_spec_type) => serializer.serialize_newtype_variant(
+//                 name,
+//                 14,
+//                 "Vector",
+//                 &*(field_spec_type.clone()),
+//             ),
+//             TypeReference::Resolved(type_spec) => {
+//                 serializer.serialize_newtype_variant(name, 15, "Resolved", type_spec.name.as_str())
+//             }
+//             TypeReference::Unresolved(type_name) => {
+//                 serializer.serialize_newtype_variant(name, 16, "Unresolved", type_name.as_str())
+//             }
+//         }
+//     }
+// }
+//
+// struct ObjectFieldSpecTypeVisitor;
+//
+// impl<'de> Visitor<'de> for ObjectFieldSpecTypeVisitor {
+//     type Value = TypeReference;
+//
+//     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         formatter.write_str("a variant of ObjectFieldSpecType")
+//     }
+//
+//     fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+//     where
+//         A: serde::de::EnumAccess<'de>,
+//     {
+//         let (variant, variant_access) = data.variant::<String>()?;
+//
+//         fn visit_unit<'de, A>(
+//             variant_access: A::Variant,
+//             variant: TypeReference,
+//         ) -> Result<TypeReference, A::Error>
+//         where
+//             A: serde::de::EnumAccess<'de>,
+//         {
+//             variant_access.unit_variant()?;
+//             Ok(variant)
+//         }
+//
+//         fn visit_vector<'de, A>(variant_access: A::Variant) -> Result<TypeReference, A::Error>
+//         where
+//             A: serde::de::EnumAccess<'de>,
+//         {
+//             let name = variant_access.newtype_variant::<String>()?;
+//
+//             Ok(TypeReference::Vector(Arc::new(TypeReference::Unresolved(
+//                 name,
+//             ))))
+//         }
+//
+//         fn visit_unresolved<'de, A>(variant_access: A::Variant) -> Result<TypeReference, A::Error>
+//         where
+//             A: serde::de::EnumAccess<'de>,
+//         {
+//             let name = variant_access.newtype_variant::<String>()?;
+//
+//             Ok(TypeReference::Unresolved(name))
+//         }
+//
+//         match variant.as_str() {
+//             "String" => visit_unit::<'de, A>(variant_access, TypeReference::String),
+//             "Boolean" => visit_unit::<'de, A>(variant_access, TypeReference::Boolean),
+//             "Uint8" => visit_unit::<'de, A>(variant_access, TypeReference::Uint8),
+//             "Uint16" => visit_unit::<'de, A>(variant_access, TypeReference::Uint16),
+//             "Uint32" => visit_unit::<'de, A>(variant_access, TypeReference::Uint32),
+//             "Uint64" => visit_unit::<'de, A>(variant_access, TypeReference::Uint64),
+//             "Int8" => visit_unit::<'de, A>(variant_access, TypeReference::Int8),
+//             "Int16" => visit_unit::<'de, A>(variant_access, TypeReference::Int16),
+//             "Int32" => visit_unit::<'de, A>(variant_access, TypeReference::Int32),
+//             "Int64" => visit_unit::<'de, A>(variant_access, TypeReference::Int64),
+//             "Double" => visit_unit::<'de, A>(variant_access, TypeReference::Double),
+//             "Float" => visit_unit::<'de, A>(variant_access, TypeReference::Float),
+//             "Map" => visit_unit::<'de, A>(variant_access, TypeReference::Map),
+//             "Object" => visit_unit::<'de, A>(variant_access, TypeReference::Object),
+//             "Vector" => visit_vector::<'de, A>(variant_access),
+//             "Resolved" | "Unresolved" => visit_unresolved::<'de, A>(variant_access),
+//             _ => unreachable!(),
+//         }
+//     }
+// }
+//
+// impl<'de> Deserialize<'de> for TypeReference {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//     where
+//         D: serde::Deserializer<'de>,
+//     {
+//         let variants = &[
+//             "String",
+//             "Boolean",
+//             "Uint8",
+//             "Uint16",
+//             "Uint32",
+//             "Uint64",
+//             "Int8",
+//             "Int16",
+//             "Int32",
+//             "Int64",
+//             "Double",
+//             "Float",
+//             "Map",
+//             "Object",
+//             "Vector",
+//             "Resolved",
+//             "Unresolved",
+//         ];
+//         deserializer.deserialize_enum("ObjectFieldSpecType", variants, ObjectFieldSpecTypeVisitor)
+//     }
+// }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnumEntrySpec {

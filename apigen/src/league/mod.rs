@@ -1,4 +1,6 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+pub mod codegen;
+
+use std::{collections::HashMap, str::FromStr};
 
 use lapi::league::{
     EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec, ObjectFieldSpec,
@@ -274,35 +276,9 @@ impl League {
 
     pub async fn resolve(&self) -> reqwest::Result<Resolved> {
         let root_help = self.resolve_root_help().await.unwrap();
-        let mut types = self.resolve_types(&root_help).await?;
-        let mut functions = self.resolve_functions(&root_help).await?;
-        let mut events = self.resolve_events(&root_help).await?;
-
-        let types_map = types.clone();
-
-        for (_, resolved) in types.iter_mut() {
-            let TypeSpecDetail::Object { fields } = &mut resolved.detail else {
-                continue;
-            };
-
-            for field in fields.iter_mut() {
-                resolve_unresolved_types(&types_map, &mut field.ty);
-            }
-        }
-
-        for (_, resolved) in functions.iter_mut() {
-            for argument in resolved.arguments.iter_mut() {
-                resolve_unresolved_types(&types_map, &mut argument.ty);
-            }
-
-            if let Some(returns) = &mut resolved.returns {
-                resolve_unresolved_types(&types_map, returns);
-            }
-        }
-
-        for (_, resolved) in events.iter_mut() {
-            resolve_unresolved_types(&types_map, &mut resolved.ty);
-        }
+        let types = self.resolve_types(&root_help).await?;
+        let functions = self.resolve_functions(&root_help).await?;
+        let events = self.resolve_events(&root_help).await?;
 
         Ok(Resolved {
             events,
@@ -352,8 +328,8 @@ fn resolve_type_reference(name: &str, element_type: &str) -> TypeReference {
         "float" => TypeReference::Float,
         "map" => TypeReference::Map,
         "object" => TypeReference::Object,
-        "vector" => TypeReference::Vector(Arc::new(resolve_type_reference(element_type, ""))),
-        _ => TypeReference::Unresolved(name.to_string()),
+        "vector" => TypeReference::Vector(Box::new(resolve_type_reference(element_type, ""))),
+        _ => TypeReference::Reference(name.to_string()),
     }
 }
 
@@ -371,29 +347,4 @@ fn enum_entry_spec_from_value(value: &Value) -> Option<EnumEntrySpec> {
         value,
         description,
     })
-}
-
-fn resolve_unresolved_types(map: &HashMap<String, TypeSpec>, target: &mut TypeReference) {
-    let mut vector_depth = 0;
-    let mut ty_current = Arc::new(target.clone());
-
-    while let TypeReference::Vector(inner) = (*ty_current).clone() {
-        vector_depth += 1;
-        ty_current = inner;
-    }
-
-    if let TypeReference::Unresolved(name) = (*ty_current).clone() {
-        let inner = TypeReference::Resolved(Arc::new(
-            map.get(&name)
-                .unwrap_or_else(|| panic!("failed to resolve type reference of {name}"))
-                .clone(),
-        ));
-
-        let mut root = inner;
-        for _ in 0..vector_depth {
-            root = TypeReference::Vector(Arc::new(root));
-        }
-
-        *target = root;
-    }
 }
