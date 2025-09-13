@@ -1,8 +1,10 @@
-use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, ffi::OsStr, fs::File, io::Write, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use lapi::league::{EventSpec, FunctionSpec, TypeSpec};
 use regex::Regex;
 use reqwest::Url;
+use serde::Deserialize;
 use sysinfo::Process;
 
 #[derive(Debug, Parser)]
@@ -55,8 +57,8 @@ async fn main() {
     let args = Cli::parse();
 
     match args.command {
-        Commands::Extract { .. } => extract(args.command),
-        Commands::Generate { .. } => generate(args.command),
+        Commands::Extract { .. } => extract(args.command).await,
+        Commands::Generate { .. } => generate(args.command).await,
     }
 }
 
@@ -74,10 +76,9 @@ async fn extract(command: Commands) {
         unreachable!()
     };
 
-    let (port, token) = if remote_port.is_none() || remote_token.is_none() {
-        get_token_and_port_from_system().unwrap()
-    } else {
-        (remote_port.unwrap(), remote_token.unwrap())
+    let (port, token) = match remote_port.is_none() || remote_token.is_none() {
+        true => get_token_and_port_from_system().unwrap(),
+        false => (remote_port.unwrap(), remote_token.unwrap()),
     };
 
     if output.is_file() {
@@ -196,7 +197,80 @@ async fn generate(command: Commands) {
         unreachable!()
     };
 
-    std::fs::read_dir(source);
+    let mut types = Vec::new();
+    let mut functions = Vec::new();
+    let mut events = Vec::new();
+
+    for entry in std::fs::read_dir(source.as_path()).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let Some(name) = path.file_stem().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        let Some(extension) = path.extension().and_then(|v| v.to_str()) else {
+            continue;
+        };
+
+        let lang = match extension {
+            "toml" => DeserializerLang::Toml,
+            "json" => DeserializerLang::Json,
+            _ => continue,
+        };
+
+        let content = std::fs::read(entry.path().as_path()).unwrap();
+
+        if separated_source {
+            let Some(target) = name.split(".").last() else {
+                continue;
+            };
+
+            match target {
+                "type" => types.push(deserializer(lang, &content)),
+                "function" => functions.push(deserializer(lang, &content)),
+                "event" => events.push(deserializer(lang, &content)),
+                _ => continue,
+            }
+        } else {
+            match name {
+                "types" => {
+                    let map = deserializer::<HashMap<String, TypeSpec>>(lang, content.as_ref());
+                    types.extend(map.into_values());
+                }
+                "functions" => {
+                    let map = deserializer::<HashMap<String, FunctionSpec>>(lang, content.as_ref());
+                    functions.extend(map.into_values());
+                }
+                "events" => {
+                    let map = deserializer::<HashMap<String, EventSpec>>(lang, content.as_ref());
+                    events.extend(map.into_values());
+                }
+                _ => continue,
+            };
+        }
+    }
+
+    println!("loaded {} types", types.len());
+    println!("loaded {} functions", functions.len());
+    println!("loaded {} events", events.len());
+
+    std::fs::create_dir_all("./generated").unwrap();
+    let mut types_output = File::create("./generated/types.rs").unwrap();
+    lapi_apigen::league::codegen::write_types(&mut types_output, &types);
+}
+
+fn deserializer<'de, T>(lang: DeserializerLang, slice: &'de [u8]) -> T
+where
+    T: Deserialize<'de>,
+{
+    match lang {
+        DeserializerLang::Toml => toml::from_slice(slice).unwrap(),
+        DeserializerLang::Json => serde_json::from_slice(slice).unwrap(),
+    }
+}
+
+enum DeserializerLang {
+    Toml,
+    Json,
 }
 
 fn get_token_and_port_from_system() -> Option<(u16, String)> {
