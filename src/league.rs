@@ -1,10 +1,18 @@
 use std::{fmt::Display, ops::Deref, str::FromStr};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
+use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 
 const RIOT_ROOT_CERTIFICATE_URL: &str =
     "https://static.developer.riotgames.com/docs/lol/riotgames.pem";
+
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "async", "await", "dyn", "try", "gen",
+];
 
 pub struct AuthenticatedHttp {
     http: reqwest::Client,
@@ -128,7 +136,7 @@ pub struct TypeSpec {
 
 impl TypeSpec {
     pub fn identifier(&self) -> String {
-        self.name.replace("-", "_")
+        self.name.replace("-", "_").to_case(Case::Pascal)
     }
 }
 
@@ -149,6 +157,17 @@ pub struct ObjectFieldSpec {
     pub ty: TypeReference,
 }
 
+impl ObjectFieldSpec {
+    pub fn ident(&self) -> String {
+        let ident = self.name.to_case(Case::Snake);
+        if RUST_KEYWORDS.contains(&ident.as_str()) {
+            format!("_{ident}")
+        } else {
+            ident
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypeReference {
     String,
@@ -167,6 +186,42 @@ pub enum TypeReference {
     Object,
     Vector(Box<TypeReference>),
     Reference(String),
+}
+
+impl TypeReference {
+    pub fn to_rust_type(&self, boxed: bool) -> String {
+        match self {
+            TypeReference::String => "std::string::String".to_owned(),
+            TypeReference::Boolean => "bool".to_owned(),
+            TypeReference::Uint8 => "u8".to_owned(),
+            TypeReference::Uint16 => "u16".to_owned(),
+            TypeReference::Uint32 => "u32".to_owned(),
+            TypeReference::Uint64 => "u64".to_owned(),
+            TypeReference::Int8 => "i8".to_owned(),
+            TypeReference::Int16 => "i16".to_owned(),
+            TypeReference::Int32 => "i32".to_owned(),
+            TypeReference::Int64 => "i64".to_owned(),
+            TypeReference::Double => "f64".to_owned(),
+            TypeReference::Float => "f32".to_owned(),
+            TypeReference::Map => {
+                "std::collections::HashMap<std::string::String, std::string::String>".to_owned()
+            }
+            TypeReference::Object => {
+                "std::collections::HashMap<std::any::Any, std::any::Any>".to_owned()
+            }
+            TypeReference::Vector(type_reference) => {
+                format!("std::vec::Vec<{}>", type_reference.to_rust_type(boxed))
+            }
+            TypeReference::Reference(name) => {
+                let ident = name.replace("-", "_").to_case(Case::Pascal);
+                if boxed {
+                    format!("std::boxed::Box<{}>", ident)
+                } else {
+                    ident
+                }
+            }
+        }
+    }
 }
 
 // impl Serialize for TypeReference {
@@ -307,4 +362,10 @@ pub struct EnumEntrySpec {
     pub name: String,
     pub value: u64,
     pub description: Option<String>,
+}
+
+impl EnumEntrySpec {
+    pub fn ident(&self) -> String {
+        self.name.to_case(Case::Pascal)
+    }
 }
