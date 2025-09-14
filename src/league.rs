@@ -2,6 +2,7 @@ use std::{fmt::Display, ops::Deref, str::FromStr};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use convert_case::{Case, Casing};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 const RIOT_ROOT_CERTIFICATE_URL: &str =
@@ -16,13 +17,14 @@ const RUST_KEYWORDS: &[&str] = &[
 
 pub struct AuthenticatedHttp {
     http: reqwest::Client,
+    pub host: Url,
 }
 
 impl AuthenticatedHttp {
     /// Creates a reqwest http client with Riot root certificate and given credentials.
     ///
     /// This method is async because it needs to fetch certificate from static server.
-    pub async fn new(token: &str) -> Result<Self, reqwest::Error> {
+    pub async fn new(host: Url, token: &str) -> Result<Self, reqwest::Error> {
         let root_certificate = reqwest::get(RIOT_ROOT_CERTIFICATE_URL)
             .await?
             .bytes()
@@ -47,7 +49,7 @@ impl AuthenticatedHttp {
             .default_headers(headers)
             .build()?;
 
-        Ok(Self { http })
+        Ok(Self { http, host })
     }
 }
 
@@ -78,6 +80,12 @@ pub struct FunctionSpec {
     pub returns: Option<TypeReference>,
     pub thread_safe: bool,
     pub tags: Vec<String>,
+}
+
+impl FunctionSpec {
+    pub fn ident(&self) -> String {
+        self.name.to_case(Case::Snake)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -122,7 +130,19 @@ pub struct FunctionArgumentSpec {
     pub name: String,
     pub description: Option<String>,
     pub optional: bool,
+    pub parameter: bool,
     pub ty: TypeReference,
+}
+
+impl FunctionArgumentSpec {
+    pub fn ident(&self) -> String {
+        let ident = self.name.to_case(Case::Snake);
+        if RUST_KEYWORDS.contains(&ident.as_str()) {
+            format!("{ident}_")
+        } else {
+            ident
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

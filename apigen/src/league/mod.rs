@@ -164,13 +164,15 @@ impl League {
                     .filter_map(|v| v.as_object())
                     .map(|v| {
                         let type_object = v.get("type").unwrap().as_object().unwrap();
+                        let name = v.get("name").unwrap().as_str().unwrap();
                         FunctionArgumentSpec {
-                            name: v.get("name").unwrap().as_str().unwrap().to_string(),
+                            name: name.to_string(),
                             description: v
                                 .get("description")
                                 .and_then(|v| v.as_str())
                                 .map(|v| v.to_string()),
                             optional: v.get("optional").and_then(|v| v.as_bool()).unwrap_or(false),
+                            parameter: url.contains(format!("{{{name}}}").as_str()),
                             ty: resolve_type_reference(
                                 type_object.get("type").unwrap().as_str().unwrap(),
                                 type_object

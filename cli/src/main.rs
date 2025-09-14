@@ -91,9 +91,10 @@ async fn extract(command: Commands) {
 
     let host = format!("https://{origin}:{port}/", origin = remote_host);
 
-    let http = lapi::league::AuthenticatedHttp::new(token.as_str())
-        .await
-        .unwrap();
+    let http =
+        lapi::league::AuthenticatedHttp::new(Url::from_str(host.as_str()).unwrap(), token.as_str())
+            .await
+            .unwrap();
     let generator = lapi_apigen::league::League::new(Url::from_str(host.as_str()).unwrap(), http);
     let resolved = generator.resolve().await.unwrap();
 
@@ -255,7 +256,10 @@ async fn generate(command: Commands) {
 
     std::fs::create_dir_all("./generated").unwrap();
     let mut types_output = File::create("./generated/types.rs").unwrap();
+    let mut functions_output = File::create("./generated/functions.rs").unwrap();
+
     lapi_apigen::league::codegen::write_types(&mut types_output, &types);
+    lapi_apigen::league::codegen::write_functions(&mut functions_output, &functions);
 }
 
 fn deserializer<'de, T>(lang: DeserializerLang, slice: &'de [u8]) -> T
