@@ -62,6 +62,14 @@ impl Deref for AuthenticatedHttp {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Build {
+    pub branch: String,
+    pub build_type: String,
+    pub patchline: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EventSpec {
     pub name: String,
     pub description: Option<String>,

@@ -3,8 +3,8 @@ pub mod codegen;
 use std::{collections::HashMap, str::FromStr};
 
 use lapi::league::{
-    EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec, ObjectFieldSpec,
-    TypeReference, TypeSpec, TypeSpecDetail,
+    Build, EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec,
+    ObjectFieldSpec, TypeReference, TypeSpec, TypeSpecDetail,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ struct RootHelpResponse {
 
 #[derive(Serialize, Deserialize)]
 pub struct Resolved {
+    pub build: Build,
     pub events: HashMap<String, EventSpec>,
     pub functions: HashMap<String, FunctionSpec>,
     pub types: HashMap<String, TypeSpec>,
@@ -36,7 +37,37 @@ impl League {
         Self { host, http }
     }
 
-    async fn resolve_root_help(&self) -> Result<RootHelpResponse, reqwest::Error> {
+    async fn resolve_build(&self) -> reqwest::Result<Build> {
+        let response = self
+            .http
+            .get(self.host.join("/system/v1/builds").unwrap())
+            .send()
+            .await?;
+
+        let json = response.json::<serde_json::Value>().await?;
+        let object = json.as_object().unwrap();
+
+        let build = Build {
+            branch: object.get("branch").unwrap().as_str().unwrap().to_string(),
+            build_type: object
+                .get("buildType")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string(),
+            patchline: object
+                .get("patchline")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string(),
+            version: object.get("version").unwrap().as_str().unwrap().to_string(),
+        };
+
+        Ok(build)
+    }
+
+    async fn resolve_root_help(&self) -> reqwest::Result<RootHelpResponse> {
         let response = self
             .http
             .post(self.host.join("/help").unwrap())
@@ -277,12 +308,14 @@ impl League {
     }
 
     pub async fn resolve(&self) -> reqwest::Result<Resolved> {
-        let root_help = self.resolve_root_help().await.unwrap();
+        let build = self.resolve_build().await?;
+        let root_help = self.resolve_root_help().await?;
         let types = self.resolve_types(&root_help).await?;
         let functions = self.resolve_functions(&root_help).await?;
         let events = self.resolve_events(&root_help).await?;
 
         Ok(Resolved {
+            build,
             events,
             types,
             functions,

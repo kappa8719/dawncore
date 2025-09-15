@@ -13,7 +13,7 @@ convert_case = "0"
 name = "stream"
 
 [workspace]
-members = [".", "cli", "apigen"]
+members = [".", "cli", "apigen", "generated"]
 
 [workspace.dependencies]
 lapi = { path = "./" }
@@ -30,3 +30,4 @@ clap = { version = "4", features = ["derive"] }
 async-trait = "0.1"
 sysinfo = "0"
 regex = "1"
+itertools = "0"
