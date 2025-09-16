@@ -2,7 +2,7 @@ pub mod codegen;
 
 use std::{collections::HashMap, str::FromStr};
 
-use lapi::league::{
+use dawncore::league::{
     Build, EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec,
     ObjectFieldSpec, TypeReference, TypeSpec, TypeSpecDetail,
 };
@@ -29,11 +29,11 @@ pub struct Resolved {
 /// League api generator
 pub struct League {
     host: Url,
-    http: lapi::league::AuthenticatedHttp,
+    http: dawncore::league::AuthenticatedHttp,
 }
 
 impl League {
-    pub fn new(host: Url, http: lapi::league::AuthenticatedHttp) -> League {
+    pub fn new(host: Url, http: dawncore::league::AuthenticatedHttp) -> League {
         Self { host, http }
     }
 

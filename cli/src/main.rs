@@ -1,8 +1,8 @@
 use std::{collections::HashMap, ffi::OsStr, fs::File, io::Write, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use lapi::league::{Build, EventSpec, FunctionSpec, TypeSpec};
-use lapi_apigen::league::Resolved;
+use dawncore::league::{Build, EventSpec, FunctionSpec, TypeSpec};
+use dawncore_apigen::league::Resolved;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ enum Commands {
         remote_token: Option<String>,
     },
     Generate {
-        #[arg(long, default_value = "lapi-extracted/")]
+        #[arg(long, default_value = "dawncore-extracted/")]
         source: PathBuf,
         #[arg(long, default_value_t = true)]
         separated_source: bool,
@@ -89,11 +89,14 @@ async fn extract(command: Commands) {
 
     let host = format!("https://{origin}:{port}/", origin = remote_host);
 
-    let http =
-        lapi::league::AuthenticatedHttp::new(Url::from_str(host.as_str()).unwrap(), token.as_str())
-            .await
-            .unwrap();
-    let generator = lapi_apigen::league::League::new(Url::from_str(host.as_str()).unwrap(), http);
+    let http = dawncore::league::AuthenticatedHttp::new(
+        Url::from_str(host.as_str()).unwrap(),
+        token.as_str(),
+    )
+    .await
+    .unwrap();
+    let generator =
+        dawncore_apigen::league::League::new(Url::from_str(host.as_str()).unwrap(), http);
     let resolved = generator.resolve().await.unwrap();
 
     if target.contains(&ExtractTarget::Build) {
@@ -272,8 +275,8 @@ async fn generate(command: Commands) {
     let mut types_output = File::create(output.join("types.rs")).unwrap();
     let mut functions_output = File::create(output.join("functions.rs")).unwrap();
 
-    lapi_apigen::league::codegen::write_types(&mut types_output, &resolved);
-    lapi_apigen::league::codegen::write_functions(&mut functions_output, &resolved);
+    dawncore_apigen::league::codegen::write_types(&mut types_output, &resolved);
+    dawncore_apigen::league::codegen::write_functions(&mut functions_output, &resolved);
 }
 
 fn serializer<'de, T>(lang: FileFormat, v: &T) -> String

@@ -1,5 +1,5 @@
 [package]
-name = "lapi"
+name = "dawncore"
 version = "0.1.0"
 edition = "2024"
 
@@ -16,9 +16,10 @@ name = "stream"
 members = [".", "cli", "apigen", "generated"]
 
 [workspace.dependencies]
-lapi = { path = "./" }
-lapi-apigen = { path = "./apigen/" }
-lapi-cli = { path = "./cli/" }
+dawncore = { path = "./" }
+dawncore-apigen = { path = "./apigen/" }
+dawncore-cli = { path = "./cli/" }
+dawncore-generated = { path = "./generated/" }
 reqwest = { version = "0", features=["json"] }
 serde = "1"
 serde_json = "1"
@@ -31,3 +32,4 @@ async-trait = "0.1"
 sysinfo = "0"
 regex = "1"
 itertools = "0"
+chrono = "0"
