@@ -342,6 +342,9 @@ name = "generated"
 version = "0.1.0"
 dependencies = [
  "lapi",
+ "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

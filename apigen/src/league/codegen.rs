@@ -133,11 +133,8 @@ pub fn write_types(file: &mut File, resolved: &Resolved) {
         base.extend(Some(generated));
     }
 
-    println!("parsing using syn");
     let parsed = syn::parse_file(base.to_string().as_str()).unwrap();
-    println!("formatting output");
     let formatted = prettyplease::unparse(&parsed);
-    println!("writing to file");
     file.write_all(generated_header_comment(&resolved.build).as_bytes())
         .unwrap();
     file.write_all(formatted.as_bytes()).unwrap();
@@ -147,8 +144,7 @@ pub fn write_functions(mut write: impl Write, resolved: &Resolved) {
     let functions = resolved.functions.values().collect::<Vec<_>>();
 
     let mut base = quote! {
-
-
+        use super::types::*;
         use crate::AuthenticatedHttp as __AuthenticatedHttp;
     };
 
@@ -177,6 +173,11 @@ pub fn write_functions(mut write: impl Write, resolved: &Resolved) {
             .iter()
             .filter(|v| v.parameter)
             .collect::<Vec<_>>();
+        let queries = function
+            .arguments
+            .iter()
+            .filter(|v| v.query)
+            .collect::<Vec<_>>();
         let url = if !parameters.is_empty() {
             let mut url = function.url.clone();
             for parameter in parameters.iter() {
@@ -185,8 +186,18 @@ pub fn write_functions(mut write: impl Write, resolved: &Resolved) {
                     format!("{{{}}}", parameter.ident()).as_str(),
                 );
             }
+
+            if !queries.is_empty() {
+                url.push('?');
+                for query in queries.iter() {
+                    let interpolation = format!("{}={{{}}}", query.name, query.ident());
+                    url.push_str(interpolation.as_str());
+                }
+            }
+
             let format_arg_defs = parameters
                 .iter()
+                .chain(queries.iter())
                 .map(|v| {
                     let ident = Ident::new(v.ident().as_str(), Span::call_site());
                     let value = match &v.ty {
@@ -197,10 +208,10 @@ pub fn write_functions(mut write: impl Write, resolved: &Resolved) {
                                         #ident.name()
                                     }
                                 }
-                                _ => quote! { #ident = #ident },
+                                _ => quote! { #ident },
                             }
                         }
-                        _ => quote! { #ident = #ident },
+                        _ => quote! { #ident },
                     };
 
                     quote! {
@@ -298,10 +309,3 @@ fn type_path_to_type(path: String, optional: bool) -> syn::Type {
 
     syn::parse_str::<syn::Type>(path.as_str()).unwrap()
 }
-
-// pub async fn get_client_config_v_1_status_by_type(
-//     client: AuthenticatedHttp,
-//     type_: u16,
-// ) -> reqwest::Result<()> {
-//     todo!()
-// }

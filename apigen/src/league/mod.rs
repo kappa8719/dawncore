@@ -187,6 +187,7 @@ impl League {
             .get("threadSafe")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+
         let arguments = full_root
             .get("arguments")
             .and_then(|v| v.as_array())
@@ -196,6 +197,8 @@ impl League {
                     .map(|v| {
                         let type_object = v.get("type").unwrap().as_object().unwrap();
                         let name = v.get("name").unwrap().as_str().unwrap();
+                        let is_parameter = url.contains(format!("{{{name}}}").as_str())
+                            || url.contains(format!("{{+{name}}}").as_str());
                         FunctionArgumentSpec {
                             name: name.to_string(),
                             description: v
@@ -203,7 +206,8 @@ impl League {
                                 .and_then(|v| v.as_str())
                                 .map(|v| v.to_string()),
                             optional: v.get("optional").and_then(|v| v.as_bool()).unwrap_or(false),
-                            parameter: url.contains(format!("{{{name}}}").as_str()),
+                            parameter: is_parameter,
+                            query: false,
                             ty: resolve_type_reference(
                                 type_object.get("type").unwrap().as_str().unwrap(),
                                 type_object
@@ -216,6 +220,21 @@ impl League {
                     .collect::<Vec<_>>()
             })
             .unwrap_or(vec![]);
+        let parameters_count = arguments.iter().filter(|v| v.parameter).count();
+        let arguments = arguments
+            .iter()
+            .map(|v| {
+                // An argument is considered when the function method can't have body
+                // or the function method can have body and there is more than one arguments which is
+                // not path parameter
+                let non_parameter_arguments = arguments.len() - parameters_count;
+                let is_query = !v.parameter && (!method.is_update() || non_parameter_arguments > 1);
+                FunctionArgumentSpec {
+                    query: is_query,
+                    ..v.clone()
+                }
+            })
+            .collect::<Vec<_>>();
 
         Ok(FunctionSpec {
             arguments,

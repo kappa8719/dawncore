@@ -92,7 +92,15 @@ pub struct FunctionSpec {
 
 impl FunctionSpec {
     pub fn ident(&self) -> String {
-        self.name.to_case(Case::Snake)
+        let snake_cased = self.name.to_case(Case::Snake);
+        if let Some((method, remaining)) = snake_cased.split_once("_") {
+            if let Ok(method) = FunctionMethod::from_str(method) {
+                let method = method.to_string().to_lowercase();
+                return format!("{remaining}_{method}");
+            }
+        }
+
+        snake_cased
     }
 }
 
@@ -104,6 +112,16 @@ pub enum FunctionMethod {
     Put,
     Patch,
     Delete,
+}
+
+impl FunctionMethod {
+    /// Returns true if this method is updating method and can have body in the request
+    pub fn is_update(&self) -> bool {
+        match self {
+            Self::Post | Self::Put | Self::Patch => true,
+            _ => false,
+        }
+    }
 }
 
 impl FromStr for FunctionMethod {
@@ -139,12 +157,14 @@ pub struct FunctionArgumentSpec {
     pub description: Option<String>,
     pub optional: bool,
     pub parameter: bool,
+    pub query: bool,
     pub ty: TypeReference,
 }
 
 impl FunctionArgumentSpec {
     pub fn ident(&self) -> String {
-        let ident = self.name.to_case(Case::Snake);
+        let mut ident = self.name.to_case(Case::Snake);
+        ident = ident.replace("+", "_+");
         if RUST_KEYWORDS.contains(&ident.as_str()) {
             format!("{ident}_")
         } else {
