@@ -1,7 +1,8 @@
-use std::{fs::File, io::Write};
+use std::{fs::File, io::Write, path::Path};
 
-use dawncore::league::{Build, TypeReference, TypeSpecDetail};
-use proc_macro2::Span;
+use dawncore::league::{Build, Category, FunctionSpec, TypeReference, TypeSpec, TypeSpecDetail};
+use itertools::Itertools;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::Ident;
 
@@ -28,276 +29,368 @@ fn generated_header_comment(build: &Build) -> String {
     )
 }
 
-pub fn write_types(file: &mut File, resolved: &Resolved) {
+pub fn write_types(directory: &Path, resolved: &Resolved) {
     let types = resolved.types.values().collect::<Vec<_>>();
-    let mut base = quote! {
+
+    let header_comment = generated_header_comment(&resolved.build);
+    let base = quote! {
         use serde::{Serialize, Deserialize};
+        use super::*;
     };
 
-    let mut types = types.to_vec();
-    types.sort_by_key(|v| match &v.detail {
-        TypeSpecDetail::Object { .. } => 0,
-        TypeSpecDetail::Enum { .. } => 1,
-        TypeSpecDetail::Unit => 2,
-    });
+    let mut modules = vec![];
+    let chunks = types.iter().into_group_map_by(|v| v.category());
 
-    for spec in types {
-        let ident = spec.identifier();
-        let ident = Ident::new(ident.as_str(), Span::call_site());
+    for (category, mut types) in chunks {
+        types.sort_by_key(|v| match &v.detail {
+            TypeSpecDetail::Object { .. } => 0,
+            TypeSpecDetail::Enum { .. } => 1,
+            TypeSpecDetail::Unit => 2,
+        });
 
-        let generated = match &spec.detail {
-            TypeSpecDetail::Object { fields } => {
-                let field_defs = fields
-                    .iter()
-                    .map(|v| {
-                        let serial_name = v.name.as_str();
-                        let ident = v.ident();
-                        let name = Ident::new(ident.as_str(), Span::call_site());
-                        let ty = type_path_to_type(v.ty.to_rust_type(false), v.optional);
+        let module_name = category_to_module_name("types", &category);
+        let file = directory.join(format!("{module_name}.rs"));
+        modules.push(module_name);
 
-                        let attr_serde_rename = if ident.as_str() == serial_name {
-                            None
-                        } else {
-                            Some(quote! {
-                                #[serde(rename = #serial_name)]
-                            })
-                        };
+        let mut base = base.clone();
+        for spec in types {
+            let def = type_as_token_stream(spec);
+            base.extend(def);
+        }
 
-                        quote! {
-                            #attr_serde_rename
-                            pub #name: #ty,
-                        }
-                    })
-                    .collect::<Vec<_>>();
+        let parsed = syn::parse_file(base.to_string().as_str()).unwrap();
+        let formatted = prettyplease::unparse(&parsed);
 
-                quote! {
-                    #[derive(Debug, Clone, Serialize, Deserialize)]
-                    pub struct #ident {
-                        #(#field_defs)*
-                    }
-                }
-            }
-            TypeSpecDetail::Enum { entries } => {
-                let mut entries = entries.clone();
-                entries.sort_by_key(|v| v.value);
-
-                let entry_defs = entries
-                    .iter()
-                    .map(|v| {
-                        let serial_name = v.name.as_str();
-                        let name = Ident::new(v.ident().as_str(), Span::call_site());
-                        let value = v.value;
-
-                        quote! {
-                            #[serde(rename = #serial_name)]
-                            #name = #value,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                let name_match_arms = entries
-                    .iter()
-                    .map(|v| {
-                        let ident = Ident::new(v.ident().as_str(), Span::call_site());
-                        let name = v.name.as_str();
-
-                        quote! {
-                            Self::#ident => #name,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                quote! {
-                    #[derive(Debug, Clone, Serialize, Deserialize)]
-                    pub enum #ident {
-                        #(#entry_defs)*
-                    }
-
-                    impl #ident {
-                        pub fn name(&self) -> &'static str {
-                            match self {
-                                #(#name_match_arms)*
-                            }
-                        }
-                    }
-                }
-            }
-            TypeSpecDetail::Unit => {
-                quote! {
-                    #[derive(Debug, Clone, Serialize, Deserialize)]
-                    pub struct #ident;
-                }
-            }
-        };
-
-        base.extend(Some(generated));
+        let mut file = File::create(file).unwrap();
+        file.write_all(header_comment.as_bytes()).unwrap();
+        file.write_all(formatted.as_bytes()).unwrap();
     }
 
-    let parsed = syn::parse_file(base.to_string().as_str()).unwrap();
+    let mod_file = directory.join("mod.rs");
+    let mut mod_file = File::create(mod_file).unwrap();
+
+    let mod_uses = modules
+        .iter()
+        .sorted()
+        .map(|v| {
+            let ident = Ident::new(v.as_str(), Span::call_site());
+            quote! {
+                mod #ident;
+                pub use #ident::*;
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mod_content = quote! {
+        #(#mod_uses)*
+    };
+
+    let parsed = syn::parse_file(mod_content.to_string().as_str()).unwrap();
     let formatted = prettyplease::unparse(&parsed);
-    file.write_all(generated_header_comment(&resolved.build).as_bytes())
-        .unwrap();
-    file.write_all(formatted.as_bytes()).unwrap();
+
+    mod_file.write_all(header_comment.as_bytes()).unwrap();
+    mod_file.write_all(formatted.as_bytes()).unwrap();
 }
 
-pub fn write_functions(mut write: impl Write, resolved: &Resolved) {
+pub fn write_functions(directory: &Path, resolved: &Resolved) {
     let functions = resolved.functions.values().collect::<Vec<_>>();
 
-    let mut base = quote! {
-        use super::types::*;
+    let header_comment = generated_header_comment(&resolved.build);
+    let base = quote! {
+        use crate::types::*;
         use crate::AuthenticatedHttp as __AuthenticatedHttp;
     };
 
-    for function in functions {
-        let arg_defs = function
-            .arguments
-            .iter()
-            .map(|v| {
-                let name = Ident::new(v.ident().as_str(), Span::call_site());
-                let ty = type_path_to_type(v.ty.to_rust_type(false), v.optional);
+    let mut modules = vec![];
+    let chunks = functions.iter().into_group_map_by(|v| v.category());
 
-                quote! {
-                    #name: #ty
-                }
-            })
-            .collect::<Vec<_>>();
-        let ident = Ident::new(function.ident().as_str(), Span::call_site());
-        let returns_path = match &function.returns {
-            Some(returns) => returns.to_rust_type(false),
-            None => "()".to_owned(),
-        };
-        let returns = type_path_to_type(returns_path, false);
+    for (category, functions) in chunks.iter() {
+        let module_name = category_to_module_name("rest", category);
+        let file = directory.join(format!("{module_name}.rs"));
+        modules.push(module_name);
 
-        let parameters = function
-            .arguments
-            .iter()
-            .filter(|v| v.parameter)
-            .collect::<Vec<_>>();
-        let queries = function
-            .arguments
-            .iter()
-            .filter(|v| v.query)
-            .collect::<Vec<_>>();
-        let url = if !parameters.is_empty() {
-            let mut url = function.url.clone();
-            for parameter in parameters.iter() {
-                url = url.replace(
-                    format!("{{{}}}", parameter.name).as_str(),
-                    format!("{{{}}}", parameter.ident()).as_str(),
-                );
+        let mut base = base.clone();
+        for function in functions {
+            let def = function_as_token_stream(resolved, function);
+            base.extend(def);
+        }
+
+        let parsed = syn::parse_file(base.to_string().as_str()).unwrap();
+        let formatted = prettyplease::unparse(&parsed);
+
+        let mut file = File::create(file).unwrap();
+        file.write_all(header_comment.as_bytes()).unwrap();
+        file.write_all(formatted.as_bytes()).unwrap();
+    }
+
+    let mod_file = directory.join("mod.rs");
+    let mut mod_file = File::create(mod_file).unwrap();
+
+    let mod_uses = modules
+        .iter()
+        .sorted()
+        .map(|v| {
+            let ident = Ident::new(v.as_str(), Span::call_site());
+            quote! {
+                pub mod #ident;
             }
+        })
+        .collect::<Vec<_>>();
 
-            if !queries.is_empty() {
-                url.push('?');
-                for query in queries.iter() {
-                    let interpolation = format!("{}={{{}}}", query.name, query.ident());
-                    url.push_str(interpolation.as_str());
-                }
-            }
+    let mod_content = quote! {
+        #(#mod_uses)*
+    };
 
-            let format_arg_defs = parameters
+    let parsed = syn::parse_file(mod_content.to_string().as_str()).unwrap();
+    let formatted = prettyplease::unparse(&parsed);
+
+    mod_file.write_all(header_comment.as_bytes()).unwrap();
+    mod_file.write_all(formatted.as_bytes()).unwrap();
+}
+
+pub fn type_as_token_stream(spec: &TypeSpec) -> TokenStream {
+    let ident = spec.identifier();
+    let ident = Ident::new(ident.as_str(), Span::call_site());
+
+    match &spec.detail {
+        TypeSpecDetail::Object { fields } => {
+            let field_defs = fields
                 .iter()
-                .chain(queries.iter())
                 .map(|v| {
-                    let ident = Ident::new(v.ident().as_str(), Span::call_site());
-                    let value = match &v.ty {
-                        TypeReference::Reference(name) => {
-                            match resolved.types.get(name).unwrap().detail {
-                                TypeSpecDetail::Enum { .. } => {
-                                    quote! {
-                                        #ident.name()
-                                    }
-                                }
-                                _ => quote! { #ident },
-                            }
-                        }
-                        _ => quote! { #ident },
+                    let serial_name = v.name.as_str();
+                    let ident = v.ident();
+                    let name = Ident::new(ident.as_str(), Span::call_site());
+                    let ty = type_path_to_type(v.ty.to_rust_type(false), v.optional);
+
+                    let attr_serde_rename = if ident.as_str() == serial_name {
+                        None
+                    } else {
+                        Some(quote! {
+                            #[serde(rename = #serial_name)]
+                        })
                     };
 
                     quote! {
-                        #ident = #value
+                        #attr_serde_rename
+                        pub #name: #ty,
                     }
                 })
                 .collect::<Vec<_>>();
 
             quote! {
-                format!(#url, #(#format_arg_defs),*).as_str()
+                #[derive(Debug, Clone, Serialize, Deserialize)]
+                pub struct #ident {
+                    #(#field_defs)*
+                }
             }
-        } else {
-            let url = function.url.as_str();
+        }
+        TypeSpecDetail::Enum { entries } => {
+            let mut entries = entries.clone();
+            entries.sort_by_key(|v| v.value);
 
-            quote! {
-                #url
-            }
-        };
-
-        let builder_def = {
-            let value = match function.method {
-                dawncore::league::FunctionMethod::Get => {
-                    quote! { client.get(client.host.join(#url).unwrap()) }
-                }
-                dawncore::league::FunctionMethod::Post => {
-                    quote! { client.post(client.host.join(#url).unwrap()) }
-                }
-                dawncore::league::FunctionMethod::Put => {
-                    quote! { client.put(client.host.join(#url).unwrap()) }
-                }
-                dawncore::league::FunctionMethod::Patch => {
-                    quote! { client.patch(client.host.join(#url).unwrap()) }
-                }
-                dawncore::league::FunctionMethod::Delete => {
-                    quote! { client.delete(client.host.join(#url).unwrap()) }
-                }
-            };
-
-            quote! {
-                let mut builder = #value;
-            }
-        };
-
-        let builder_set_body = {
-            let pairs = function
-                .arguments
+            let entry_defs = entries
                 .iter()
-                .filter(|v| !v.parameter)
                 .map(|v| {
-                    let ident = v.ident();
-                    let name = v.name.as_str();
-                    let value = syn::parse_str::<syn::Ident>(ident.as_str()).unwrap();
+                    let serial_name = v.name.as_str();
+                    let name = Ident::new(v.ident().as_str(), Span::call_site());
+                    let value = v.value;
 
-                    quote! { #name: #value }
+                    quote! {
+                        #[serde(rename = #serial_name)]
+                        #name = #value,
+                    }
                 })
                 .collect::<Vec<_>>();
 
-            let json = quote! {
-                serde_json::json!({
-                    #(#pairs),*
+            let name_match_arms = entries
+                .iter()
+                .map(|v| {
+                    let ident = Ident::new(v.ident().as_str(), Span::call_site());
+                    let name = v.name.as_str();
+
+                    quote! {
+                        Self::#ident => #name,
+                    }
                 })
-            };
+                .collect::<Vec<_>>();
 
             quote! {
-                builder.json(&{ #json });
+                #[derive(Debug, Clone, Serialize, Deserialize)]
+                pub enum #ident {
+                    #(#entry_defs)*
+                }
+
+                impl #ident {
+                    pub fn name(&self) -> &'static str {
+                        match self {
+                            #(#name_match_arms)*
+                        }
+                    }
+                }
             }
-        };
-
-        let function_def = quote! {
-            pub async fn #ident(client: __AuthenticatedHttp, #(#arg_defs),*) -> reqwest::Result<#returns> {
-                #builder_def
-                #builder_set_body
-
-                todo!()
+        }
+        TypeSpecDetail::Unit => {
+            quote! {
+                #[derive(Debug, Clone, Serialize, Deserialize)]
+                pub struct #ident;
             }
-        };
-
-        base.extend(function_def);
+        }
     }
+}
 
-    let parsed = syn::parse_file(base.to_string().as_str()).unwrap();
-    let formatted = prettyplease::unparse(&parsed);
-    write
-        .write_all(generated_header_comment(&resolved.build).as_bytes())
-        .unwrap();
-    write.write_all(formatted.as_bytes()).unwrap();
+pub fn function_as_token_stream(resolved: &Resolved, function: &FunctionSpec) -> TokenStream {
+    let arg_defs = function
+        .arguments
+        .iter()
+        .map(|v| {
+            let name = Ident::new(v.ident().as_str(), Span::call_site());
+            let ty = type_path_to_type(v.ty.to_rust_type(false), v.optional);
+
+            quote! {
+                #name: #ty
+            }
+        })
+        .collect::<Vec<_>>();
+    let ident = Ident::new(function.ident().as_str(), Span::call_site());
+    let returns_path = match &function.returns {
+        Some(returns) => returns.to_rust_type(false),
+        None => "()".to_owned(),
+    };
+    let returns = type_path_to_type(returns_path, false);
+
+    let parameters = function
+        .arguments
+        .iter()
+        .filter(|v| v.parameter)
+        .collect::<Vec<_>>();
+    let queries = function
+        .arguments
+        .iter()
+        .filter(|v| v.query)
+        .collect::<Vec<_>>();
+    let url = if !parameters.is_empty() {
+        let mut url = function.url.clone();
+        for parameter in parameters.iter() {
+            let interpolated = format!("{{{}}}", parameter.ident());
+            url = url
+                .replace(
+                    format!("{{{}}}", parameter.name).as_str(),
+                    interpolated.as_str(),
+                )
+                .replace(
+                    format!("{{+{}}}", parameter.name).as_str(),
+                    interpolated.as_str(),
+                );
+        }
+
+        if !queries.is_empty() {
+            url.push('?');
+            for query in queries.iter() {
+                let interpolation = format!("{}={{{}}}", query.name, query.ident());
+                url.push_str(interpolation.as_str());
+            }
+        }
+
+        let format_arg_defs = parameters
+            .iter()
+            .chain(queries.iter())
+            .map(|v| {
+                let ident = Ident::new(v.ident().as_str(), Span::call_site());
+                let value = match &v.ty {
+                    TypeReference::Reference(name) => {
+                        match resolved.types.get(name).unwrap().detail {
+                            TypeSpecDetail::Enum { .. } => {
+                                quote! {
+                                    #ident.name()
+                                }
+                            }
+                            _ => quote! { #ident },
+                        }
+                    }
+                    _ => quote! { #ident },
+                };
+
+                quote! {
+                    #ident = #value
+                }
+            })
+            .collect::<Vec<_>>();
+
+        quote! {
+            format!(#url, #(#format_arg_defs),*).as_str()
+        }
+    } else {
+        let url = function.url.as_str();
+
+        quote! {
+            #url
+        }
+    };
+
+    let builder_def = {
+        let value = match function.method {
+            dawncore::league::FunctionMethod::Get => {
+                quote! { client.get(client.host.join(#url).unwrap()) }
+            }
+            dawncore::league::FunctionMethod::Post => {
+                quote! { client.post(client.host.join(#url).unwrap()) }
+            }
+            dawncore::league::FunctionMethod::Put => {
+                quote! { client.put(client.host.join(#url).unwrap()) }
+            }
+            dawncore::league::FunctionMethod::Patch => {
+                quote! { client.patch(client.host.join(#url).unwrap()) }
+            }
+            dawncore::league::FunctionMethod::Delete => {
+                quote! { client.delete(client.host.join(#url).unwrap()) }
+            }
+        };
+
+        quote! {
+            let mut builder = #value;
+        }
+    };
+
+    let builder_set_body = {
+        let pairs = function
+            .arguments
+            .iter()
+            .filter(|v| !v.parameter)
+            .map(|v| {
+                let ident = v.ident();
+                let name = v.name.as_str();
+                let value = syn::parse_str::<syn::Ident>(ident.as_str()).unwrap();
+
+                quote! { #name: #value }
+            })
+            .collect::<Vec<_>>();
+
+        let json = quote! {
+            serde_json::json!({
+                #(#pairs),*
+            })
+        };
+
+        quote! {
+            builder.json(&{ #json });
+        }
+    };
+
+    quote! {
+        pub async fn #ident(client: __AuthenticatedHttp, #(#arg_defs),*) -> reqwest::Result<#returns> {
+            #builder_def
+            #builder_set_body
+
+            todo!()
+        }
+    }
+}
+
+fn category_to_module_name(prefix: &str, category: &Category) -> String {
+    match category {
+        Category::Uncategorized => String::from(prefix),
+        _ => format!("{prefix}_{category}"),
+    }
 }
 
 fn type_path_to_type(path: String, optional: bool) -> syn::Type {

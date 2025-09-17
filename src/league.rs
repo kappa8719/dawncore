@@ -2,6 +2,7 @@ use std::{fmt::Display, ops::Deref, str::FromStr};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use convert_case::{Case, Casing};
+use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +70,74 @@ pub struct Build {
     pub version: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub enum Category {
+    Uncategorized,
+    Builtin,
+    Core,
+    WebSocket,
+    Http,
+    Async,
+    Logging,
+    Tracing,
+    Performance,
+    Plugin(String),
+}
+
+impl Category {
+    pub fn from_tags(tags: &[String]) -> Self {
+        if tags.contains(&String::from("$builtin")) {
+            return Self::Builtin;
+        } else if tags.contains(&String::from("websocket")) {
+            return Self::WebSocket;
+        } else if tags.contains(&String::from("logging")) {
+            return Self::Logging;
+        } else if tags.contains(&String::from("http")) {
+            return Self::Http;
+        } else if tags.contains(&String::from("core")) {
+            return Self::Core;
+        } else if tags.contains(&String::from("Tracing")) {
+            return Self::Tracing;
+        } else if tags.contains(&String::from("performance")) {
+            return Self::Performance;
+        } else if tags.contains(&String::from("async")) {
+            return Self::Async;
+        }
+
+        let regex_plugin = Regex::new(r"(?i)^\s*Plugin\s+(?<name>[^\s]+)\s*$").unwrap();
+        for tag in tags.iter() {
+            if let Some(captures) = regex_plugin.captures(tag.as_str()) {
+                let Some(plugin) = captures.name("name") else {
+                    continue;
+                };
+
+                return Self::Plugin(plugin.as_str().to_owned());
+            }
+        }
+
+        Self::Uncategorized
+    }
+}
+
+impl Display for Category {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Category::Uncategorized => f.write_str("uncategorized"),
+            Category::Builtin => f.write_str("builtin"),
+            Category::Core => f.write_str("core"),
+            Category::WebSocket => f.write_str("websocket"),
+            Category::Http => f.write_str("http"),
+            Category::Async => f.write_str("async"),
+            Category::Logging => f.write_str("logging"),
+            Category::Tracing => f.write_str("tracing"),
+            Category::Performance => f.write_str("performance"),
+            Category::Plugin(name) => {
+                f.write_str(format!("plugin_{}", name.to_case(Case::Snake)).as_str())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EventSpec {
     pub name: String,
@@ -93,14 +162,18 @@ pub struct FunctionSpec {
 impl FunctionSpec {
     pub fn ident(&self) -> String {
         let snake_cased = self.name.to_case(Case::Snake);
-        if let Some((method, remaining)) = snake_cased.split_once("_") {
-            if let Ok(method) = FunctionMethod::from_str(method) {
-                let method = method.to_string().to_lowercase();
-                return format!("{remaining}_{method}");
-            }
+        if let Some((method, remaining)) = snake_cased.split_once("_")
+            && let Ok(method) = FunctionMethod::from_str(method)
+        {
+            let method = method.to_string().to_lowercase();
+            return format!("{remaining}_{method}");
         }
 
         snake_cased
+    }
+
+    pub fn category(&self) -> Category {
+        Category::from_tags(self.tags.as_slice())
     }
 }
 
@@ -186,6 +259,10 @@ impl TypeSpec {
     pub fn identifier(&self) -> String {
         self.name.replace("-", "_").to_case(Case::Pascal)
     }
+
+    pub fn category(&self) -> Category {
+        Category::from_tags(self.tags.as_slice())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -251,12 +328,7 @@ impl TypeReference {
             TypeReference::Int64 => "i64".to_owned(),
             TypeReference::Double => "f64".to_owned(),
             TypeReference::Float => "f32".to_owned(),
-            TypeReference::Map => {
-                "std::collections::HashMap<std::string::String, std::string::String>".to_owned()
-            }
-            TypeReference::Object => {
-                "std::collections::HashMap<std::any::Any, std::any::Any>".to_owned()
-            }
+            TypeReference::Map | TypeReference::Object => "serde_json::Value".to_owned(),
             TypeReference::Vector(type_reference) => {
                 format!("std::vec::Vec<{}>", type_reference.to_rust_type(boxed))
             }

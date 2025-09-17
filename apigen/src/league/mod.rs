@@ -1,6 +1,6 @@
 pub mod codegen;
 
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, vec};
 
 use dawncore::league::{
     Build, EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec,
@@ -126,12 +126,21 @@ impl League {
                 .and_then(|v| v.as_str())
                 .unwrap_or(""),
         );
+        let tags = root
+            .get("tags")
+            .unwrap()
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|v| v.to_owned())
+            .collect::<Vec<_>>();
 
         Ok(EventSpec {
             name,
             description,
             ty,
-            tags: vec![],
+            tags,
         })
     }
 
@@ -235,6 +244,15 @@ impl League {
                 }
             })
             .collect::<Vec<_>>();
+        let tags = full_root
+            .get("tags")
+            .unwrap()
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|v| v.to_owned())
+            .collect::<Vec<_>>();
 
         Ok(FunctionSpec {
             arguments,
@@ -245,7 +263,7 @@ impl League {
             privilege,
             returns,
             thread_safe,
-            tags: vec![],
+            tags,
         })
     }
 
@@ -288,6 +306,15 @@ impl League {
         let fields = map.get("fields").and_then(|v| v.as_array());
         let values = map.get("values").and_then(|v| v.as_array());
         let size = map.get("size").and_then(|v| v.as_u64());
+        let tags = map
+            .get("tags")
+            .unwrap()
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|v| v.to_owned())
+            .collect::<Vec<_>>();
 
         let spec_detail = if let Some(fields) = fields
             && !fields.is_empty()
@@ -320,7 +347,7 @@ impl League {
             description,
             size,
             detail: spec_detail,
-            tags: vec![],
+            tags,
         };
 
         Ok(spec)

@@ -242,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "convert_case",
+ "regex",
  "reqwest",
  "serde",
 ]
@@ -252,6 +253,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dawncore",
+ "itertools",
  "prettyplease",
  "proc-macro2",
  "quote",

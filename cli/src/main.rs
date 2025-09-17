@@ -1,4 +1,11 @@
-use std::{collections::HashMap, ffi::OsStr, fs::File, io::Write, path::PathBuf, str::FromStr};
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use dawncore::league::{Build, EventSpec, FunctionSpec, TypeSpec};
@@ -40,6 +47,12 @@ enum Commands {
         #[arg(long, default_value = "./generated/src")]
         output: PathBuf,
     },
+    Stat {
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        source: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, ValueEnum)]
@@ -57,6 +70,7 @@ async fn main() {
     match args.command {
         Commands::Extract { .. } => extract(args.command).await,
         Commands::Generate { .. } => generate(args.command).await,
+        Commands::Stat { .. } => stat(args.command).await,
     }
 }
 
@@ -271,15 +285,47 @@ async fn generate(command: Commands) {
         resolved.events.insert(e.name.clone(), e);
     }
 
-    std::fs::create_dir_all(output.as_path()).unwrap();
-    let mut types_output = File::create(output.join("types.rs")).unwrap();
-    let mut functions_output = File::create(output.join("functions.rs")).unwrap();
+    let functions_dir = output.join("functions/");
+    let types_dir = output.join("types/");
 
-    dawncore_apigen::league::codegen::write_types(&mut types_output, &resolved);
-    dawncore_apigen::league::codegen::write_functions(&mut functions_output, &resolved);
+    std::fs::create_dir_all(output.as_path()).unwrap();
+    std::fs::create_dir_all(functions_dir.as_path()).unwrap();
+    std::fs::create_dir_all(types_dir.as_path()).unwrap();
+
+    dawncore_apigen::league::codegen::write_types(types_dir.as_path(), &resolved);
+    dawncore_apigen::league::codegen::write_functions(functions_dir.as_path(), &resolved);
 }
 
-fn serializer<'de, T>(lang: FileFormat, v: &T) -> String
+async fn stat(command: Commands) {
+    let Commands::Stat { target, source } = command else {
+        unreachable!();
+    };
+
+    match target.as_str() {
+        "tags" => {
+            let Some(source) = source else {
+                panic!("source must be given when stating tags");
+            };
+
+            let resolved = load_resolved_from_source(Path::new(source.as_str()), true);
+            let mut tags = HashMap::<String, usize>::new();
+
+            for function_spec in resolved.functions.values() {
+                for tag in function_spec.tags.iter() {
+                    let count = tags.get(tag).unwrap_or(&0);
+                    tags.insert(tag.clone(), count + 1);
+                }
+            }
+
+            println!("{tags:#?}");
+        }
+        _ => {
+            panic!("unknown stat target {target}");
+        }
+    };
+}
+
+fn serializer<T>(lang: FileFormat, v: &T) -> String
 where
     T: Serialize,
 {
@@ -303,6 +349,81 @@ where
 enum FileFormat {
     Toml,
     Json,
+}
+
+fn load_resolved_from_source(source: &Path, separated: bool) -> Resolved {
+    let build = {
+        let content = std::fs::read_to_string(source.join("build.toml")).unwrap();
+        toml::from_str::<Build>(content.as_str()).unwrap()
+    };
+
+    let mut types = HashMap::new();
+    let mut functions = HashMap::new();
+    let mut events = HashMap::new();
+
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let Some(name) = path.file_stem().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        let Some(extension) = path.extension().and_then(|v| v.to_str()) else {
+            continue;
+        };
+
+        let lang = match extension {
+            "toml" => FileFormat::Toml,
+            "json" => FileFormat::Json,
+            _ => continue,
+        };
+
+        let content = std::fs::read(entry.path().as_path()).unwrap();
+
+        if separated {
+            let Some(target) = name.split(".").last() else {
+                continue;
+            };
+
+            match target {
+                "type" => {
+                    let spec: TypeSpec = deserializer(lang, &content);
+                    types.insert(spec.name.clone(), spec);
+                }
+                "function" => {
+                    let spec: FunctionSpec = deserializer(lang, &content);
+                    functions.insert(spec.name.clone(), spec);
+                }
+                "event" => {
+                    let spec: EventSpec = deserializer(lang, &content);
+                    events.insert(spec.name.clone(), spec);
+                }
+                _ => continue,
+            }
+        } else {
+            match name {
+                "types" => {
+                    let map = deserializer::<HashMap<String, TypeSpec>>(lang, content.as_ref());
+                    types.extend(map);
+                }
+                "functions" => {
+                    let map = deserializer::<HashMap<String, FunctionSpec>>(lang, content.as_ref());
+                    functions.extend(map);
+                }
+                "events" => {
+                    let map = deserializer::<HashMap<String, EventSpec>>(lang, content.as_ref());
+                    events.extend(map);
+                }
+                _ => continue,
+            };
+        }
+    }
+
+    Resolved {
+        build,
+        events,
+        functions,
+        types,
+    }
 }
 
 fn get_token_and_port_from_system() -> Option<(u16, String)> {
