@@ -193,7 +193,7 @@ pub fn type_as_token_stream(spec: &TypeSpec) -> TokenStream {
                 .map(|v| {
                     let serial_name = v.name.as_str();
                     let name = Ident::new(v.ident().as_str(), Span::call_site());
-                    let value = v.value;
+                    let value = v.value as isize;
 
                     quote! {
                         #[serde(rename = #serial_name)]

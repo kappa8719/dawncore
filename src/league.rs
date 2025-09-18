@@ -190,10 +190,7 @@ pub enum FunctionMethod {
 impl FunctionMethod {
     /// Returns true if this method is updating method and can have body in the request
     pub fn is_update(&self) -> bool {
-        match self {
-            Self::Post | Self::Put | Self::Patch => true,
-            _ => false,
-        }
+        matches!(self, Self::Post | Self::Put | Self::Patch)
     }
 }
 
