@@ -6,6 +6,7 @@ use dawncore::league::{
     Build, EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec,
     ObjectFieldSpec, TypeReference, TypeSpec, TypeSpecDetail,
 };
+use itertools::Itertools;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -322,6 +323,7 @@ impl League {
             let field_specs = fields
                 .iter()
                 .filter_map(object_field_spec_from_value)
+                .dedup_by(|a, b| a.name == b.name)
                 .collect::<Vec<_>>();
 
             TypeSpecDetail::Object {
@@ -333,6 +335,7 @@ impl League {
             let entry_specs = values
                 .iter()
                 .filter_map(enum_entry_spec_from_value)
+                .dedup_by(|a, b| a.name == b.name)
                 .collect::<Vec<_>>();
 
             TypeSpecDetail::Enum {
