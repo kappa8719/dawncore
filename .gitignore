@@ -3,3 +3,6 @@
 /cli/target
 /generated/target
 /extracted
+
+# bacon, bacon-ls
+.bacon-locations
