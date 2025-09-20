@@ -240,11 +240,11 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "dawncore"
 version = "0.1.0"
 dependencies = [
- "base64",
- "convert_case",
- "regex",
- "reqwest",
- "serde",
+ "dawncore-apigen",
+ "dawncore-cli",
+ "dawncore-generated",
+ "dawncore-spec",
+ "dawncore-util",
 ]
 
 [[package]]
@@ -252,7 +252,8 @@ name = "dawncore-apigen"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "dawncore",
+ "dawncore-spec",
+ "dawncore-util",
  "itertools",
  "prettyplease",
  "proc-macro2",
@@ -269,8 +270,9 @@ name = "dawncore-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "dawncore",
  "dawncore-apigen",
+ "dawncore-spec",
+ "dawncore-util",
  "itertools",
  "regex",
  "reqwest",
@@ -285,10 +287,29 @@ dependencies = [
 name = "dawncore-generated"
 version = "0.1.0"
 dependencies = [
- "dawncore",
+ "dawncore-util",
  "reqwest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dawncore-spec"
+version = "0.1.0"
+dependencies = [
+ "convert_case",
+ "regex",
+ "serde",
+]
+
+[[package]]
+name = "dawncore-util"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "regex",
+ "reqwest",
+ "serde",
 ]
 
 [[package]]

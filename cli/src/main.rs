@@ -8,8 +8,9 @@ use std::{
 };
 
 use clap::{Parser, Subcommand, ValueEnum};
-use dawncore::league::{Build, EventSpec, FunctionSpec, TypeSpec};
 use dawncore_apigen::league::Resolved;
+use dawncore_spec::league::{Build, EventSpec, FunctionSpec, TypeSpec};
+use dawncore_util::http::AuthenticatedHttp;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -103,12 +104,9 @@ async fn extract(command: Commands) {
 
     let host = format!("https://{origin}:{port}/", origin = remote_host);
 
-    let http = dawncore::league::AuthenticatedHttp::new(
-        Url::from_str(host.as_str()).unwrap(),
-        token.as_str(),
-    )
-    .await
-    .unwrap();
+    let http = AuthenticatedHttp::new(Url::from_str(host.as_str()).unwrap(), token.as_str())
+        .await
+        .unwrap();
     let generator =
         dawncore_apigen::league::League::new(Url::from_str(host.as_str()).unwrap(), http);
     let resolved = generator.resolve().await.unwrap();

@@ -1,7 +1,12 @@
+# we need to specify every crates because of https://github.com/rust-lang/rust-clippy/issues/9555
 [jobs.bacon-ls]
 command = [
   "cargo", "clippy",
-  "--workspace", "--exclude", "dawncore-generated", "--all-targets", "--all-features",
+  "-p", "dawncore-apigen",
+  "-p", "dawncore-spec",
+  "-p", "dawncore-util",
+  "-p", "dawncore-cli",
+  "--all-targets", "--all-features",
   "--message-format", "json-diagnostic-rendered-ansi",
 ]
 analyzer = "cargo_json"

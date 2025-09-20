@@ -5,7 +5,8 @@ edition = "2024"
 description = "API extractor and codegen"
 
 [dependencies]
-dawncore.workspace = true
+dawncore-spec.workspace = true
+dawncore-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

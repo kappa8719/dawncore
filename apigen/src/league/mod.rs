@@ -2,10 +2,11 @@ pub mod codegen;
 
 use std::{collections::HashMap, str::FromStr, vec};
 
-use dawncore::league::{
+use dawncore_spec::league::{
     Build, EnumEntrySpec, EventSpec, FunctionArgumentSpec, FunctionMethod, FunctionSpec,
     ObjectFieldSpec, TypeReference, TypeSpec, TypeSpecDetail,
 };
+use dawncore_util::http::AuthenticatedHttp;
 use itertools::Itertools;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -30,11 +31,11 @@ pub struct Resolved {
 /// League api generator
 pub struct League {
     host: Url,
-    http: dawncore::league::AuthenticatedHttp,
+    http: AuthenticatedHttp,
 }
 
 impl League {
-    pub fn new(host: Url, http: dawncore::league::AuthenticatedHttp) -> League {
+    pub fn new(host: Url, http: AuthenticatedHttp) -> League {
         Self { host, http }
     }
 

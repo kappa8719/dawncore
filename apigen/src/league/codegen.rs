@@ -1,6 +1,8 @@
 use std::{fs::File, io::Write, path::Path};
 
-use dawncore::league::{Build, Category, FunctionSpec, TypeReference, TypeSpec, TypeSpecDetail};
+use dawncore_spec::league::{
+    Build, Category, FunctionMethod, FunctionSpec, TypeReference, TypeSpec, TypeSpecDetail,
+};
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -367,19 +369,19 @@ pub fn function_as_token_stream(resolved: &Resolved, function: &FunctionSpec) ->
 
     let builder_def = {
         let value = match function.method {
-            dawncore::league::FunctionMethod::Get => {
+            FunctionMethod::Get => {
                 quote! { client.get(client.host.join(url.as_str()).unwrap()) }
             }
-            dawncore::league::FunctionMethod::Post => {
+            FunctionMethod::Post => {
                 quote! { client.post(client.host.join(url.as_str()).unwrap()) }
             }
-            dawncore::league::FunctionMethod::Put => {
+            FunctionMethod::Put => {
                 quote! { client.put(client.host.join(url.as_str()).unwrap()) }
             }
-            dawncore::league::FunctionMethod::Patch => {
+            FunctionMethod::Patch => {
                 quote! { client.patch(client.host.join(url.as_str()).unwrap()) }
             }
-            dawncore::league::FunctionMethod::Delete => {
+            FunctionMethod::Delete => {
                 quote! { client.delete(client.host.join(url.as_str()).unwrap()) }
             }
         };
