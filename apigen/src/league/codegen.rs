@@ -34,8 +34,9 @@ pub fn write_types(directory: &Path, resolved: &Resolved) {
 
     let header_comment = generated_header_comment(&resolved.build);
     let base = quote! {
-        use serde::{Serialize, Deserialize};
+        #[allow(unused_imports)]
         use super::*;
+        use serde::{Serialize, Deserialize};
     };
 
     let mut modules = vec![];
@@ -97,6 +98,7 @@ pub fn write_functions(directory: &Path, resolved: &Resolved) {
 
     let header_comment = generated_header_comment(&resolved.build);
     let base = quote! {
+        #[allow(unused_imports)]
         use crate::types::*;
         use crate::AuthenticatedHttp as __AuthenticatedHttp;
     };
@@ -268,81 +270,117 @@ pub fn function_as_token_stream(resolved: &Resolved, function: &FunctionSpec) ->
         .iter()
         .filter(|v| v.query)
         .collect::<Vec<_>>();
-    let url = if !parameters.is_empty() {
-        let mut url = function.url.clone();
-        for parameter in parameters.iter() {
-            let interpolated = format!("{{{}}}", parameter.ident());
-            url = url
-                .replace(
-                    format!("{{{}}}", parameter.name).as_str(),
-                    interpolated.as_str(),
-                )
-                .replace(
-                    format!("{{+{}}}", parameter.name).as_str(),
-                    interpolated.as_str(),
-                );
-        }
-
-        if !queries.is_empty() {
-            url.push('?');
-            for query in queries.iter() {
-                let interpolation = format!("{}={{{}}}", query.name, query.ident());
-                url.push_str(interpolation.as_str());
+    let url_def = {
+        let url = if !parameters.is_empty() {
+            let mut url = function.url.clone();
+            for parameter in parameters.iter() {
+                let interpolated = format!("{{{}}}", parameter.ident());
+                url = url
+                    .replace(
+                        format!("{{{}}}", parameter.name).as_str(),
+                        interpolated.as_str(),
+                    )
+                    .replace(
+                        format!("{{+{}}}", parameter.name).as_str(),
+                        interpolated.as_str(),
+                    );
             }
-        }
 
-        let format_arg_defs = parameters
-            .iter()
-            .chain(queries.iter())
-            .map(|v| {
-                let ident = Ident::new(v.ident().as_str(), Span::call_site());
-                let value = match &v.ty {
-                    TypeReference::Reference(name) => {
-                        match resolved.types.get(name).unwrap().detail {
-                            TypeSpecDetail::Enum { .. } => {
-                                quote! {
-                                    #ident.name()
+            let format_arg_defs = parameters
+                .iter()
+                .map(|v| {
+                    let ident = Ident::new(v.ident().as_str(), Span::call_site());
+                    let value = match &v.ty {
+                        TypeReference::Reference(name) => {
+                            match resolved.types.get(name).unwrap().detail {
+                                TypeSpecDetail::Enum { .. } => {
+                                    quote! {
+                                        #ident.name()
+                                    }
                                 }
+                                _ => quote! { #ident },
                             }
-                            _ => quote! { #ident },
+                        }
+                        _ => quote! { #ident },
+                    };
+
+                    if v.optional {
+                        quote! {
+                            #ident = match #ident {
+                                Some(#ident) => format!("{}", #value),
+                                None => String::new()
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #ident = #value
                         }
                     }
-                    _ => quote! { #ident },
-                };
+                })
+                .collect::<Vec<_>>();
 
-                quote! {
-                    #ident = #value
+            quote! {
+                format!(#url, #(#format_arg_defs),*)
+            }
+        } else {
+            let url = function.url.as_str();
+
+            quote! {
+                std::string::String::from(#url)
+            }
+        };
+
+        let query_applies = queries
+            .iter()
+            .map(|v| {
+                let ident = Ident::new(v.ident().as_str(), Span::call_site());
+                let format = format!("{}={{}}", v.name);
+                let value = type_reference_to_url_parameter(resolved, &v.ty, &ident);
+
+                if v.optional {
+                    quote! {
+                        if let Some(#ident) = &#ident {
+                            let _value = #value;
+                            url.push_str(format!(#format, _value).as_str());
+                        }
+                    }
+                } else {
+                    quote! {
+                        {
+                            let _value = #value;
+                            url.push_str(format!(#format, _value).as_str());
+                        }
+                    }
                 }
             })
             .collect::<Vec<_>>();
 
         quote! {
-            format!(#url, #(#format_arg_defs),*).as_str()
-        }
-    } else {
-        let url = function.url.as_str();
+            let url = {
+                let mut url = #url;
+                #(#query_applies)*
 
-        quote! {
-            #url
+                url
+            };
         }
     };
 
     let builder_def = {
         let value = match function.method {
             dawncore::league::FunctionMethod::Get => {
-                quote! { client.get(client.host.join(#url).unwrap()) }
+                quote! { client.get(client.host.join(url.as_str()).unwrap()) }
             }
             dawncore::league::FunctionMethod::Post => {
-                quote! { client.post(client.host.join(#url).unwrap()) }
+                quote! { client.post(client.host.join(url.as_str()).unwrap()) }
             }
             dawncore::league::FunctionMethod::Put => {
-                quote! { client.put(client.host.join(#url).unwrap()) }
+                quote! { client.put(client.host.join(url.as_str()).unwrap()) }
             }
             dawncore::league::FunctionMethod::Patch => {
-                quote! { client.patch(client.host.join(#url).unwrap()) }
+                quote! { client.patch(client.host.join(url.as_str()).unwrap()) }
             }
             dawncore::league::FunctionMethod::Delete => {
-                quote! { client.delete(client.host.join(#url).unwrap()) }
+                quote! { client.delete(client.host.join(url.as_str()).unwrap()) }
             }
         };
 
@@ -372,16 +410,35 @@ pub fn function_as_token_stream(resolved: &Resolved, function: &FunctionSpec) ->
         };
 
         quote! {
-            builder.json(&{ #json });
+            builder = builder.json(&{ #json });
+        }
+    };
+
+    let response_def = {
+        quote! {
+            let response = builder.send().await?;
+        }
+    };
+
+    let return_statement = {
+        if function.returns.is_some() {
+            quote! {
+                response.json().await
+            }
+        } else {
+            quote! {
+                Ok(())
+            }
         }
     };
 
     quote! {
         pub async fn #ident(client: __AuthenticatedHttp, #(#arg_defs),*) -> reqwest::Result<#returns> {
+            #url_def
             #builder_def
             #builder_set_body
-
-            todo!()
+            #response_def
+            #return_statement
         }
     }
 }
@@ -401,4 +458,39 @@ fn type_path_to_type(path: String, optional: bool) -> syn::Type {
     };
 
     syn::parse_str::<syn::Type>(path.as_str()).unwrap()
+}
+
+fn type_reference_to_url_parameter(
+    resolved: &Resolved,
+    reference: &TypeReference,
+    ident: &Ident,
+) -> TokenStream {
+    match reference {
+        TypeReference::Vector(ty) => {
+            let inner = type_reference_to_url_parameter(
+                resolved,
+                ty.as_ref(),
+                &Ident::new("value", Span::call_site()),
+            );
+            quote! {
+                #ident.iter().map(|value| {
+                    format!("{}", #inner)
+                }).collect::<Vec<_>>().join(",");
+            }
+        }
+        TypeReference::Reference(name) => match resolved.types.get(name).unwrap().detail {
+            TypeSpecDetail::Enum { .. } => {
+                quote! {
+                    #ident.name()
+                }
+            }
+            TypeSpecDetail::Object { .. } => {
+                quote! {
+                    serde_json::to_string(&#ident).unwrap()
+                }
+            }
+            _ => quote! { &#ident },
+        },
+        _ => quote! { &#ident },
+    }
 }
