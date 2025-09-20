@@ -188,11 +188,20 @@ impl League {
             .map(|v| v.to_string())
             .unwrap_or(format!("/{name}"));
         let privilege = console_root.get("privilege").and_then(|v| v.as_u64());
-        let returns = console_root
+        let returns = full_root
             .get("returns")
             .and_then(|v| v.as_object())
-            .and_then(|v| v.keys().next_back())
-            .map(|v| resolve_type_reference(v.as_str(), ""));
+            .and_then(|v| {
+                let ty = v.get("type")?.as_str()?;
+                if ty.is_empty() {
+                    return None;
+                }
+
+                Some(resolve_type_reference(
+                    ty,
+                    v.get("elementType").and_then(|v| v.as_str()).unwrap_or(""),
+                ))
+            });
         let thread_safe = full_root
             .get("threadSafe")
             .and_then(|v| v.as_bool())
